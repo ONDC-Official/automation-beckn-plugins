@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"ondcworkbench/internal/apiservice"
+	"ondcworkbench/internal/ondc/payloadutils"
 	"strings"
 	"time"
 
@@ -31,8 +32,14 @@ func validateConfig(config *Config) error {
 	return nil
 }
 
-func setRequestCookies(requestData *apiservice.WorkbenchRequestData) {
-	httpReq := &requestData.Request
+func setRequestCookies(requestData *apiservice.WorkbenchRequestData) error {
+	httpReq := requestData.Request
+	
+	val, _ := httpReq.Cookie("header_validation")
+	if val != nil {
+		return payloadutils.NewBadRequestHTTPError("header validation bypass attempted!")
+	}
+
 	httpReq.AddCookie(&http.Cookie{
 		Name: "flow_id",
 		Value: requestData.FlowID,
@@ -65,6 +72,7 @@ func setRequestCookies(requestData *apiservice.WorkbenchRequestData) {
 		Name: "request_owner",
 		Value: string(requestData.RequestOwner),
 	})
+	return nil
 }
 
 func getBooleanString(value bool) string {
@@ -148,4 +156,26 @@ func getTransactionPropertiesFromConfigService(ctx context.Context, configServic
 	}
 
 	return envelope.Data, nil
+}
+
+func(w *ondcWorkbench) createTransactionCache(ctx context.Context,requestData *apiservice.WorkbenchRequestData) error {
+	
+	key := w.TransactionCache.CreateTransactionKey(requestData.TransactionID, requestData.SubscriberURL)
+	transactionDataExists,err := w.TransactionCache.CheckIfTransactionExists(ctx,
+		key,
+	)
+	if(err != nil){
+		log.Errorf(ctx,err,"failed to check if transaction exists in cache for transaction ID: %s",requestData.TransactionID)
+		return payloadutils.NewInternalServerNackError("unable to get transaction from redis cache", requestData.BodyRaw["context"])
+	}
+	if(!transactionDataExists){
+		_,err := w.TransactionCache.CreateTransaction(
+			ctx,
+			key,
+			requestData,
+			0,
+		)
+		return err
+	}
+	return nil
 }

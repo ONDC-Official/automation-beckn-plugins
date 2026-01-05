@@ -79,15 +79,15 @@ func New(ctx context.Context, cache definition.Cache, keyMgr definition.KeyManag
 	}, nil, nil
 }
 
-func (w *ondcWorkbench) WorkbenchReceiver(request http.Request,body []byte) (error){
-	payloadEnv,payloadRaw, err := payloadutils.ValidateAndExtractPayload(context.Background(),body,w.Config.TransactionProperties)
+func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Request,body []byte) (error){
+	payloadEnv,payloadRaw, err := payloadutils.ValidateAndExtractPayload(ctx,body,w.Config.TransactionProperties)
 	if(err != nil){
-		log.Errorf(context.Background(),err,"payload receive failed")
+		log.Errorf(ctx,err,"payload receive failed")
 		return err
 	}
 	requestOwner,subscriberURL, err := payloadutils.GetRequestData(payloadEnv,apiservice.ModuleType(w.Config.ModuleType),apiservice.ModuleRole(w.Config.ModuleRole),*request.URL)
 	if(err != nil){
-		log.Errorf(context.Background(),err,"payload receive failed")
+		log.Errorf(ctx,err,"payload receive failed")
 		return err
 	}
 	workbenchRequestData := &apiservice.WorkbenchRequestData{
@@ -100,7 +100,10 @@ func (w *ondcWorkbench) WorkbenchReceiver(request http.Request,body []byte) (err
 		TransactionID: payloadEnv.Context.TransactionID,
 		TransactionProperties: w.Config.TransactionProperties,
 	}
-	receiverErr := fmt.Errorf("unsupported module type: %s; only receiver or caller are supported", w.Config.ModuleType)
+	receiverErr :=  payloadutils.NewInternalServerNackError(
+		fmt.Sprintf("unsupported module type: %s; only receiver or caller are supported", w.Config.ModuleType),
+		workbenchRequestData.BodyRaw["context"],
+	) 
 	if(w.Config.ModuleType == string(apiservice.Receiver)){
 		receiverErr = w.requestReceiver.ReceiveFromNP(context.Background(),workbenchRequestData)
 	} else if(w.Config.ModuleType == string(apiservice.Caller)) {
@@ -108,13 +111,22 @@ func (w *ondcWorkbench) WorkbenchReceiver(request http.Request,body []byte) (err
 	}
 	if(receiverErr == nil){
 		log.Infof(context.Background(),"payload received successfully for transaction ID: %s",workbenchRequestData.TransactionID)
-		setRequestCookies(workbenchRequestData)
+		err:= setRequestCookies(workbenchRequestData)
+		if(err != nil){
+			log.Errorf(ctx,err,"failed to set request cookies for transaction ID: %s",workbenchRequestData.TransactionID)
+			return err
+		}
+		err = w.createTransactionCache(ctx,workbenchRequestData)
+		if(err != nil){
+			log.Errorf(ctx,err,"failed to create transaction cache for transaction ID: %s",workbenchRequestData.TransactionID)
+			return err
+		}
 	}
 	return receiverErr
 }
 
 // workbenchProcessor
-func (w *ondcWorkbench) WorkbenchProcessor(request http.Request,body []byte) (error){
+func (w *ondcWorkbench) WorkbenchProcessor(ctx context.Context,request *http.Request,body []byte) (error){
 
 	// print cookies for debugging
 	for _, cookie := range request.Cookies() {

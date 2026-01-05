@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"ondcworkbench/internal/apiservice"
 	cache "ondcworkbench/internal/ondc/cache"
 
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
@@ -125,16 +126,18 @@ func (s *Service) UpdateTransactionCache(
 }
 
 // CreateTransaction overwrites any existing transaction at transSubKey (same as TS comment).
-func (s *Service) CreateTransaction(ctx context.Context, transSubKey string, req cache.RequestProperties, cacheTTL time.Duration) (*cache.TransactionCache, error) {
+func (s *Service) CreateTransaction(ctx context.Context, transSubKey string, req *apiservice.WorkbenchRequestData, cacheTTL time.Duration) (*cache.TransactionCache, error) {
 	if s.Cache == nil {
 		return nil, errors.New("cache is nil")
 	}
 
+	subType := apiservice.GetSubscriberTypeFromModuleType(apiservice.ModuleRole(req.ModuleType))
+
 	txn := &cache.TransactionCache{
-		SessionId:       req.SessionId,
-		FlowId:          req.FlowId,
+		SessionId:       req.SessionID,
+		FlowId:          req.FlowID,
 		LatestAction:    "",
-		SubscriberType:  req.SubscriberType,
+		SubscriberType:  string(subType),
 		LatestTimestamp: time.Unix(0, 0).UTC().Format(time.RFC3339Nano),
 		MessageIds:      []string{},
 		ApiList:         []any{},

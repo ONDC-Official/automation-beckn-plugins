@@ -52,9 +52,11 @@ func (r *WorkbenchRequestReceiver) ReceiveFromNP(ctx context.Context, requestDat
 			ctx, requestData.SessionID,
 		)
 		if sessionErr != nil {
+			log.Errorf(ctx,sessionErr,"failed to load session data for session id: %s", requestData.SessionID)
 			return payloadutils.NewInternalServerNackError(sessionErr.Error(), requestData.BodyRaw["context"])
 		}
 		requestData.Difficulty = sessionData.SessionDifficulty
+		return nil
 	}
 	return payloadutils.NewPreconditionFailedHTTPError(
 		fmt.Sprintf("No active expectation found for transaction ID: %s and Subscriber URL: %s for as a %s", requestData.TransactionID, requestData.SubscriberURL,requestData.RequestOwner),
@@ -95,6 +97,8 @@ func (r *WorkbenchRequestReceiver) ReceiveFromMock(ctx context.Context, requestD
 
 func (r *WorkbenchRequestReceiver) tryFulfillExpectation(ctx context.Context, subscriberData *cache.SubscriberCache, requestData *apiservice.WorkbenchRequestData) error {
 	newExpectations := []cache.Expectation{}
+	fulfilled := false
+	log.Infof(ctx,"Trying to fulfill api expectaion for action: %s and subData: %+#v", requestData.BodyEnvelope.Context.Action, subscriberData)
 	for _, expectation := range subscriberData.ActiveSessions {
 		expiredTime,err := time.Parse(time.RFC3339,expectation.ExpireAt)
 		if err != nil {
@@ -103,12 +107,13 @@ func (r *WorkbenchRequestReceiver) tryFulfillExpectation(ctx context.Context, su
 		}
 		nowTime := time.Now()
 		if nowTime.After(expiredTime) {
-			log.Infof(ctx, "expectation expired at %v, now %v, %+#v", expiredTime, nowTime, expectation)
+			log.Warnf(ctx, "expectation expired at %v, now %v, %+#v", expiredTime, nowTime, expectation)
 			continue
 		}
-		if expectation.ExpectedAction == &requestData.BodyEnvelope.Context.Action{
+		if expectation.ExpectedAction == requestData.BodyEnvelope.Context.Action && !fulfilled {
 			requestData.FlowID = expectation.FlowId
 			requestData.SessionID = expectation.SessionId
+			fulfilled = true
 			log.Infof(ctx, "expectation fulfilled: %+#v", expectation)
 		}else {
 			newExpectations = append(newExpectations, expectation)

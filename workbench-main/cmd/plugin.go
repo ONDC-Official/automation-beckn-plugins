@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"ondcworkbench"
-	apiservice "ondcworkbench/internal/apiService"
+	"ondcworkbench/internal/apiservice"
 
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )

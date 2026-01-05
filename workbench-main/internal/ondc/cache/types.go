@@ -27,7 +27,7 @@ type SessionDifficulty struct {
 type Expectation struct {
 	SessionId       string  `json:"sessionId"`
 	FlowId          string  `json:"flowId"`
-	ExpectedAction  *string `json:"expectedAction,omitempty"`
+	ExpectedAction  string `json:"expectedAction,omitempty"`
 	ExpireAt        string  `json:"expireAt"`
 }
 
@@ -56,8 +56,8 @@ type FormApiType struct {
 // When writing new items we typically append strongly-typed ApiData/FormApiType.
 
 type TransactionCache struct {
-	SessionId       *string           `json:"sessionId,omitempty"`
-	FlowId          *string           `json:"flowId,omitempty"`
+	SessionId       string           `json:"sessionId,omitempty"`
+	FlowId          string           `json:"flowId,omitempty"`
 	LatestAction    string            `json:"latestAction"`
 	LatestTimestamp string            `json:"latestTimestamp"`
 	Type            string            `json:"type"`

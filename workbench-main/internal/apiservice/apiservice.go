@@ -12,6 +12,12 @@ const (
 	BPP ModuleRole = "BPP"
 )
 
+func GetSubscriberTypeFromModuleType(role ModuleRole) ModuleRole{
+	if role == BAP {
+		return BPP
+	}
+	return BAP
+}
 
 type RequestOwner string
 
@@ -44,7 +50,7 @@ type PayloadRaw = map[string]interface{}
 
 // WorkbenchRequestData represents the data structure for workbench requests
 type WorkbenchRequestData struct {
-	Request http.Request
+	Request *http.Request
 	BodyRaw 	  PayloadRaw
 	BodyEnvelope PayloadEnvelope
 	RequestOwner RequestOwner

@@ -102,7 +102,7 @@ func GetRequestData(payload apiservice.PayloadEnvelope, moduleType apiservice.Mo
 }
 
 func NewBadRequestNackError(msg string,ondcContext any) error {
-	return model.NewWorkbenchErr("BAP_REQUEST",msg, "NACK",ondcContext)
+	return model.NewWorkbenchErr("BAD_REQUEST",msg, "NACK",ondcContext)
 }
 
 func NewInternalServerNackError(msg string, ondcContext any) error {
@@ -110,7 +110,7 @@ func NewInternalServerNackError(msg string, ondcContext any) error {
 }
 
 func NewBadRequestHTTPError(msg string) error {
-	return model.NewWorkbenchErr("BAP_REQUEST",msg, "HTTP",nil)
+	return model.NewWorkbenchErr("BAD_REQUEST",msg, "HTTP",nil)
 }
 
 func NewPreconditionFailedHTTPError(msg string) error {
