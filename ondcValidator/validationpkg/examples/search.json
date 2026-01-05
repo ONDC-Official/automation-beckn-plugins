@@ -1,0 +1,36 @@
+[
+	{
+		"context": {
+			"domain": "ONDC:RET10",
+			"action": "search",
+			"country": "IND",
+			"city": "std:080",
+			"core_version": "1.2.5",
+			"bap_id": "dev-automation.ondc.org",
+			"bap_uri": "https://197c2e5e5beb.ngrok-free.app",
+			"transaction_id": "txn_g1766987315",
+			"message_id": "msg_f1766987315",
+			"timestamp": "2025-12-29T05:48:34.896Z",
+			"ttl": "PT30S"
+		},
+		"message": {
+			"intent": {
+				"category": {
+					"id": "Food and Beverages"
+				},
+				"fulfillment": {
+					"type": "Delivery",
+					"end": {
+						"location": {
+							"gps": "12.9715987,77.5945627"
+						}
+					}
+				},
+				"payment": {
+					"@ondc/org/buyer_app_finder_fee_type": "percent",
+					"@ondc/org/buyer_app_finder_fee_amount": "2"
+				}
+			}
+		}
+	}
+]

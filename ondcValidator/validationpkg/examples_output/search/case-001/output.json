@@ -1,0 +1,13 @@
+{
+  "action": "search",
+  "case": 1,
+  "uniqueKey": "txn_g1766987315",
+  "results": [
+    {
+      "testName": "CATEGORY_REQUIRED_ID",
+      "valid": false,
+      "code": 30000,
+      "description": "#### **CATEGORY_REQUIRED_ID**\n\n- All elements of $.message.intent.category.id must be in [\"Fruits and Vegetables\", \"Masala \u0026 Seasoning\", \"Oil \u0026 Ghee\", \"Eggs, Meat \u0026 Fish\", \"Bakery, Cakes \u0026 Dairy\", \"Pet Care\", \"Detergents and Dishwash\", \"Dairy and Cheese\", \"Snacks, Dry Fruits, Nuts\", \"Pasta, Soup and Noodles\", \"Cereals and Breakfast\", \"Sauces, Spreads and Dips\", \"Chocolates and Biscuits\", \"Cooking and Baking Needs\", \"Tinned and Processed Food\", \"Atta, Flours and Sooji\", \"Rice and Rice Products\", \"Dals and Pulses\", \"Salt, Sugar and Jaggery\", \"Energy and Soft Drinks\", \"Water\", \"Tea and Coffee\", \"Fruit Juices and Fruit Drinks\", \"Snacks and Namkeen\", \"Ready to Cook and Eat\", \"Pickles and Chutney\", \"Indian Sweets\", \"Frozen Vegetables\", \"Frozen Snacks\", \"Gift Voucher\"]\n\n\u003e **Skip if:**\n\u003e\n\u003e     - $.message.intent.category.id is not in the payload"
+    }
+  ]
+}
