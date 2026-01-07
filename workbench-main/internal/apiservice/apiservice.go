@@ -43,6 +43,9 @@ type PayloadEnvelope struct {
 		BppID         string `json:"bpp_id,omitempty"`
 		BppURI		string `json:"bpp_uri,omitempty"`
 		Action 	  string `json:"action"`
+		TTL	   string `json:"ttl,omitempty"`
+		MessageID   string `json:"message_id,omitempty"`
+		Timestamp   string `json:"timestamp,omitempty"`
 	}
 }
 

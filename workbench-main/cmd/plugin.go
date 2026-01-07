@@ -11,14 +11,10 @@ import (
 
 type workbenchProvider struct{}
 
-func (w *workbenchProvider) New(ctx context.Context,cache definition.Cache,keyManager definition.KeyManager,config map[string]string) (definition.OndcWorkbench, func() error, error){
+func (w *workbenchProvider) New(ctx context.Context,cache definition.Cache,config map[string]string) (definition.OndcWorkbench, func() error, error){
 	if(cache == nil){
 		return nil,nil, fmt.Errorf("cache instance cannot be nil")
-	}
-	if(keyManager == nil){
-		return nil,nil, fmt.Errorf("key manager instance cannot be nil")
-	}
-	
+	}	
 	auditURL := config["auditURL"]
 	protocolVersion := config["protocolVersion"]
 	protocolDomain := config["protocolDomain"]
@@ -40,7 +36,7 @@ func (w *workbenchProvider) New(ctx context.Context,cache definition.Cache,keyMa
 		return nil,nil, fmt.Errorf("configServiceURL cannot be empty")
 	}
 
-	return ondcworkbench.New(ctx,cache,keyManager,&ondcworkbench.Config{
+	return ondcworkbench.New(ctx,cache,&ondcworkbench.Config{
 		AuditURL: auditURL,
 		ProtocolVersion: protocolVersion,
 		ProtocolDomain: protocolDomain,

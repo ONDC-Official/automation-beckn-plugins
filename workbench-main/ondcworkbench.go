@@ -8,6 +8,7 @@ import (
 	"ondcworkbench/internal/ondc/cache/sessioncache"
 	"ondcworkbench/internal/ondc/cache/subscribercache"
 	"ondcworkbench/internal/ondc/cache/transactioncache"
+	contextvalidatotors "ondcworkbench/internal/ondc/contextValidatotors"
 	"ondcworkbench/internal/ondc/payloadutils"
 	"ondcworkbench/internal/receiver"
 
@@ -27,20 +28,18 @@ type Config struct {
 
 type ondcWorkbench struct {
 	Config *Config
-	KeyManager definition.KeyManager
 	requestReceiver *receiver.WorkbenchRequestReceiver
 	TransactionCache *transactioncache.Service
 	SessionCache	*sessioncache.Service
 	SubscriberCache  *subscribercache.Service
+	ContextValidator *contextvalidatotors.Validator
 }
 
-func New(ctx context.Context, cache definition.Cache, keyMgr definition.KeyManager, config *Config) (definition.OndcWorkbench,func() error, error) {
+func New(ctx context.Context, cache definition.Cache, config *Config) (definition.OndcWorkbench,func() error, error) {
 	if(cache == nil){
 		return nil, nil, fmt.Errorf("cache cannot be nil")
 	}
-	if(keyMgr == nil){
-		return nil, nil, fmt.Errorf("key manager cannot be nil")
-	}
+	
 	if(config == nil){
 		return nil, nil, fmt.Errorf("config cannot be nil")
 	}
@@ -56,7 +55,7 @@ func New(ctx context.Context, cache definition.Cache, keyMgr definition.KeyManag
 	}
 
 	config.TransactionProperties = transactionProperties
-	log.Infof(ctx,"transaction properties loaded from config service: %#+v",config.TransactionProperties)
+	log.Infof(ctx,"transaction properties loaded from config service: %#+v",transactionProperties)
 	
 	txnCache := &transactioncache.Service{
 		Cache: cache,
@@ -69,16 +68,18 @@ func New(ctx context.Context, cache definition.Cache, keyMgr definition.KeyManag
 	}
 	rcv := receiver.NewWorkbenchRequestReceiver(*txnCache,*subscriberCache,*sessionCache)
 
+	contextValidator := contextvalidatotors.NewContextValidator(txnCache,transactionProperties)
+
 	return &ondcWorkbench{
 		Config:    config,
 		TransactionCache: txnCache,
 		SessionCache: sessionCache,
 		SubscriberCache: subscriberCache,
-		KeyManager: keyMgr,
 		requestReceiver:  rcv,
+		ContextValidator: contextValidator,
 	}, nil, nil
 }
-
+// WorkbenchReceiver
 func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Request,body []byte) (error){
 	payloadEnv,payloadRaw, err := payloadutils.ValidateAndExtractPayload(ctx,body,w.Config.TransactionProperties)
 	if(err != nil){
@@ -125,13 +126,14 @@ func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Req
 	return receiverErr
 }
 
-// workbenchProcessor
-func (w *ondcWorkbench) WorkbenchProcessor(ctx context.Context,request *http.Request,body []byte) (error){
-
-	// print cookies for debugging
-	for _, cookie := range request.Cookies() {
-		log.Infof(context.Background(),"Cookie: %s=%s", cookie.Name, cookie.Value)
+// WorkbenchValidateContext
+func (w *ondcWorkbench) WorkbenchValidateContext(ctx context.Context,request *http.Request,body []byte) (error){
+	payloadEnv, raw, err := payloadutils.ValidateAndExtractPayload(ctx, body, w.Config.TransactionProperties)
+	if err != nil {
+		log.Errorf(ctx, err, "context validation: failed to parse payload")
+		return err
 	}
-
-	return nil
+	cleanUpHttpRequest(request)
+	return w.ContextValidator.ValidateContext(ctx, request, payloadEnv, raw)
 }
+

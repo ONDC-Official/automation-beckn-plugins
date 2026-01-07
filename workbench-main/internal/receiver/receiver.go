@@ -139,9 +139,9 @@ func (r *WorkbenchRequestReceiver) handleTransactionWhichExits(
 		return payloadutils.NewInternalServerNackError(err.Error(), requestData.BodyRaw["context"])
 	}
 	difficulty := r.defaultDifficulty()
-	if transactionData.SessionId != nil {
+	if transactionData.SessionId != "" {
 		sessionData, sessionErr := r.sessionCache.LoadSessionThatExists(
-			ctx, *transactionData.SessionId,
+			ctx, transactionData.SessionId,
 		)
 		if sessionErr != nil {
 			return payloadutils.NewInternalServerNackError(sessionErr.Error(), requestData.BodyRaw["context"])
@@ -149,8 +149,8 @@ func (r *WorkbenchRequestReceiver) handleTransactionWhichExits(
 		difficulty = sessionData.SessionDifficulty
 	}
 	requestData.Difficulty = difficulty
-	requestData.FlowID = *transactionData.FlowId
-	requestData.SessionID = *transactionData.SessionId
+	requestData.FlowID = transactionData.FlowId
+	requestData.SessionID = transactionData.SessionId
 	return nil
 }
 

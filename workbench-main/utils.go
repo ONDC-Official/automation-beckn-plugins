@@ -26,9 +26,6 @@ func validateConfig(config *Config) error {
 	if config.ModuleRole != "BAP" && config.ModuleRole != "BPP" {
 		return fmt.Errorf("module role must be either 'BAP' or 'BPP'")
 	}
-	if(config.AuditURL == ""){
-		return fmt.Errorf("audit URL cannot be empty")
-	}
 	return nil
 }
 
@@ -178,4 +175,13 @@ func(w *ondcWorkbench) createTransactionCache(ctx context.Context,requestData *a
 		return err
 	}
 	return nil
+}
+
+func cleanUpHttpRequest(req *http.Request) {
+	// remove all cookies from the request
+	req.Header.Del("Cookie")
+	// remove all authorization headers
+	req.Header.Del("Authorization")
+	// remove all query parameters
+	req.URL.RawQuery = ""
 }
