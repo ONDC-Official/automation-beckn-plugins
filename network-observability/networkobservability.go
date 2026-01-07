@@ -9,11 +9,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -21,8 +22,8 @@ import (
 
 	"github.com/AsaiYusuke/jsonpath"
 	"github.com/beckn-one/beckn-onix/pkg/log"
+	"gopkg.in/yaml.v3"
 )
-
 
 type Config struct {
 	AuditURL        string
@@ -34,19 +35,42 @@ type Config struct {
 	MaxBodyBytes    int64
 	IncludeRawReq   bool
 	IncludeRawRes   bool
-	RemapJSON       string
-	HeadersJSON     string
+	AuditHeaders    map[string]string
 	BearerToken     string
 	RemapFlatten    bool
 	DropOnQueueFull bool
+	RemapTemplate   any
 }
 
-func NewNetworkObservabilityMiddleware(ctx context.Context, config map[string]string) (func(http.Handler) http.Handler, error) {
-	parsed, err := parseConfig(config)
+// FileConfig is the YAML configuration schema.
+// This keeps configuration structured (no JSON-in-string for remap).
+type FileConfig struct {
+	AuditURL        string            `yaml:"audit_url"`
+	AuditMethod     string            `yaml:"audit_method"`
+	Async           *bool             `yaml:"async"`
+	TimeoutMs       *int              `yaml:"timeout_ms"`
+	QueueSize       *int              `yaml:"queue_size"`
+	WorkerCount     *int              `yaml:"worker_count"`
+	MaxBodyBytes    *int64            `yaml:"max_body_bytes"`
+	IncludeRawReq   *bool             `yaml:"include_raw_req"`
+	IncludeRawRes   *bool             `yaml:"include_raw_res"`
+	Remap           any               `yaml:"remap"`
+	RemapFlatten    *bool             `yaml:"remap_flatten"`
+	DropOnQueueFull *bool             `yaml:"drop_on_queue_full"`
+	AuditHeaders    map[string]string `yaml:"audit_headers"`
+	BearerToken     string            `yaml:"audit_bearer_token"`
+}
+
+// NewNetworkObservabilityMiddleware loads plugin configuration from a YAML file.
+func NewNetworkObservabilityMiddleware(ctx context.Context, configPath string) (func(http.Handler) http.Handler, error) {
+	parsed, err := parseConfigFile(configPath)
 	if err != nil {
 		return nil, err
 	}
+	return newMiddlewareFromConfig(ctx, parsed)
+}
 
+func newMiddlewareFromConfig(ctx context.Context, parsed Config) (func(http.Handler) http.Handler, error) {
 	if parsed.AuditURL == "" {
 		log.Warnf(ctx, "network-observability: audit_url is empty; middleware is a no-op")
 		return func(next http.Handler) http.Handler { return next }, nil
@@ -57,9 +81,9 @@ func NewNetworkObservabilityMiddleware(ctx context.Context, config map[string]st
 		return nil, err
 	}
 
-	headers, err := parseHeaders(parsed.HeadersJSON)
-	if err != nil {
-		return nil, err
+	headers := map[string]string{}
+	for k, v := range parsed.AuditHeaders {
+		headers[k] = v
 	}
 	if parsed.BearerToken != "" {
 		if _, ok := headers["Authorization"]; !ok {
@@ -70,9 +94,9 @@ func NewNetworkObservabilityMiddleware(ctx context.Context, config map[string]st
 	client := &http.Client{Timeout: parsed.Timeout}
 	dispatcher := newAuditDispatcher(ctx, client, auditURL.String(), parsed.AuditMethod, headers, parsed.QueueSize, parsed.WorkerCount, parsed.DropOnQueueFull)
 
-	remapTemplate, err := parseRemapTemplate(parsed.RemapJSON)
-	if err != nil {
-		return nil, err
+	remapTemplate := parsed.RemapTemplate
+	if remapTemplate == nil {
+		remapTemplate = map[string]any{}
 	}
 
 	return func(next http.Handler) http.Handler {
@@ -83,8 +107,7 @@ func NewNetworkObservabilityMiddleware(ctx context.Context, config map[string]st
 				requestUUID = ""
 			}
 
-			reqCapture, reqBodyBytes, reqTruncated := captureRequestBody(r, parsed.MaxBodyBytes)
-			_ = reqCapture
+			_, reqBodyBytes, reqTruncated := captureRequestBody(r, parsed.MaxBodyBytes)
 
 			crw := newCaptureResponseWriter(w, parsed.MaxBodyBytes)
 			start := time.Now()
@@ -127,39 +150,22 @@ func NewNetworkObservabilityMiddleware(ctx context.Context, config map[string]st
 	}, nil
 }
 
-func parseConfig(cfg map[string]string) (Config, error) {
-	get := func(key string) string { return strings.TrimSpace(cfg[key]) }
-	getBool := func(key string, def bool) bool {
-		v := strings.TrimSpace(strings.ToLower(cfg[key]))
-		if v == "" {
-			return def
-		}
-		return v == "true" || v == "1" || v == "yes"
+func parseConfigFile(configPath string) (Config, error) {
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" {
+		return Config{}, fmt.Errorf("network-observability: config path is empty")
 	}
-	getInt := func(key string, def int) int {
-		v := strings.TrimSpace(cfg[key])
-		if v == "" {
-			return def
-		}
-		i, err := strconv.Atoi(v)
-		if err != nil {
-			return def
-		}
-		return i
-	}
-	getInt64 := func(key string, def int64) int64 {
-		v := strings.TrimSpace(cfg[key])
-		if v == "" {
-			return def
-		}
-		i, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return def
-		}
-		return i
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return Config{}, fmt.Errorf("network-observability: failed to read config file at %s: %w", configPath, err)
 	}
 
-	auditMethod := strings.ToUpper(get("audit_method"))
+	var fileCfg FileConfig
+	if err := yaml.Unmarshal(data, &fileCfg); err != nil {
+		return Config{}, fmt.Errorf("network-observability: failed to parse YAML: %w", err)
+	}
+
+	auditMethod := strings.ToUpper(strings.TrimSpace(fileCfg.AuditMethod))
 	if auditMethod == "" {
 		auditMethod = http.MethodPost
 	}
@@ -167,66 +173,62 @@ func parseConfig(cfg map[string]string) (Config, error) {
 		return Config{}, errors.New("network-observability: unsupported audit_method (allowed: POST, PUT)")
 	}
 
-	timeoutMs := getInt("timeout_ms", 5000)
-	if timeoutMs <= 0 {
-		timeoutMs = 5000
+	async := true
+	if fileCfg.Async != nil {
+		async = *fileCfg.Async
 	}
-
-	maxBody := getInt64("max_body_bytes", 1024*1024)
-	if maxBody < 0 {
-		maxBody = 0
+	timeoutMs := 5000
+	if fileCfg.TimeoutMs != nil && *fileCfg.TimeoutMs > 0 {
+		timeoutMs = *fileCfg.TimeoutMs
 	}
-
-	queueSize := getInt("queue_size", 1000)
-	if queueSize <= 0 {
-		queueSize = 1000
+	queueSize := 1000
+	if fileCfg.QueueSize != nil && *fileCfg.QueueSize > 0 {
+		queueSize = *fileCfg.QueueSize
 	}
-	workers := getInt("worker_count", 2)
-	if workers <= 0 {
-		workers = 1
+	workerCount := 2
+	if fileCfg.WorkerCount != nil && *fileCfg.WorkerCount > 0 {
+		workerCount = *fileCfg.WorkerCount
+	}
+	maxBodyBytes := int64(1024 * 1024)
+	if fileCfg.MaxBodyBytes != nil {
+		maxBodyBytes = *fileCfg.MaxBodyBytes
+		if maxBodyBytes < 0 {
+			maxBodyBytes = 0
+		}
+	}
+	includeRawReq := false
+	if fileCfg.IncludeRawReq != nil {
+		includeRawReq = *fileCfg.IncludeRawReq
+	}
+	includeRawRes := false
+	if fileCfg.IncludeRawRes != nil {
+		includeRawRes = *fileCfg.IncludeRawRes
+	}
+	remapFlatten := false
+	if fileCfg.RemapFlatten != nil {
+		remapFlatten = *fileCfg.RemapFlatten
+	}
+	dropOnQueueFull := true
+	if fileCfg.DropOnQueueFull != nil {
+		dropOnQueueFull = *fileCfg.DropOnQueueFull
 	}
 
 	return Config{
-		AuditURL:        get("audit_url"),
+		AuditURL:        strings.TrimSpace(fileCfg.AuditURL),
 		AuditMethod:     auditMethod,
-		Async:           getBool("async", true),
+		Async:           async,
 		Timeout:         time.Duration(timeoutMs) * time.Millisecond,
 		QueueSize:       queueSize,
-		WorkerCount:     workers,
-		MaxBodyBytes:    maxBody,
-		IncludeRawReq:   getBool("include_raw_req", false),
-		IncludeRawRes:   getBool("include_raw_res", false),
-		RemapJSON:       get("remap_json"),
-		HeadersJSON:     get("audit_headers_json"),
-		BearerToken:     get("audit_bearer_token"),
-		RemapFlatten:    getBool("remap_flatten", false),
-		DropOnQueueFull: getBool("drop_on_queue_full", true),
+		WorkerCount:     workerCount,
+		MaxBodyBytes:    maxBodyBytes,
+		IncludeRawReq:   includeRawReq,
+		IncludeRawRes:   includeRawRes,
+		RemapFlatten:    remapFlatten,
+		DropOnQueueFull: dropOnQueueFull,
+		AuditHeaders:    fileCfg.AuditHeaders,
+		BearerToken:     strings.TrimSpace(fileCfg.BearerToken),
+		RemapTemplate:   fileCfg.Remap,
 	}, nil
-}
-
-func parseHeaders(headersJSON string) (map[string]string, error) {
-	headers := map[string]string{}
-	if strings.TrimSpace(headersJSON) == "" {
-		return headers, nil
-	}
-	if err := json.Unmarshal([]byte(headersJSON), &headers); err != nil {
-		return nil, err
-	}
-	return headers, nil
-}
-
-func parseRemapTemplate(remapJSON string) (any, error) {
-	if strings.TrimSpace(remapJSON) == "" {
-		return map[string]any{}, nil
-	}
-	var template any
-	if err := json.Unmarshal([]byte(remapJSON), &template); err != nil {
-		return nil, err
-	}
-	if template == nil {
-		return map[string]any{}, nil
-	}
-	return template, nil
 }
 
 func captureRequestBody(r *http.Request, maxBytes int64) (bool, []byte, bool) {

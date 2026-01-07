@@ -7,37 +7,38 @@ This plugin provides an `http.Handler` middleware that:
 - Applies a configurable remap using JSONPath (same library/dialect used in validator).
 - Posts an audit event to a configured `audit_url` either synchronously or asynchronously.
 
-## Configuration
+## Configuration (YAML)
 
-The plugin is constructed via:
+This plugin loads its configuration from a YAML file.
 
-- `NewNetworkObservabilityMiddleware(ctx, config map[string]string)`
+### How the host passes config
 
-### Config keys
+The plugin entrypoint still receives a `map[string]string` (host/plugin-framework interface), but it only uses it to locate the YAML path.
 
-- `audit_url` (string, required): Destination URL to POST/PUT audit events.
-- `audit_method` (string, optional): `POST` (default) or `PUT`.
-- `async` (bool, default `true`):
-  - `true`: enqueue audit events and send on background worker(s).
-  - `false`: send audit event inline after handler completes.
-- `timeout_ms` (int, default `5000`): HTTP client timeout.
-- `queue_size` (int, default `1000`): buffered queue length (async mode).
-- `worker_count` (int, default `2`): number of background workers (async mode).
-- `drop_on_queue_full` (bool, default `true`): if `true`, drop and log when queue is full.
-- `max_body_bytes` (int64, default `1048576`): max bytes captured for request/response body.
-- `include_raw_req` (bool, default `false`): include `req` object in the audit payload.
-- `include_raw_res` (bool, default `false`): include `res` object in the audit payload.
+Supported keys (first match wins):
 
-Auth headers for the audit request:
+- `configPath`
+- `config_path`
+- `config`
 
-- `audit_bearer_token` (string, optional): convenience key to set `Authorization: Bearer <token>`.
-- `audit_headers_json` (string JSON object, optional): arbitrary outbound headers.
-  - If `audit_headers_json` contains `Authorization`, it is not overwritten.
+### YAML schema
 
-Remapping:
-
-- `remap_json` (string JSON, optional): JSON template where string values may be JSONPath expressions.
-- `remap_flatten` (bool, default `false`): if `true`, flattens nested JSONPath result slices.
+| Key                  |         Type |    Default | Notes                                                                                |
+| -------------------- | -----------: | ---------: | ------------------------------------------------------------------------------------ |
+| `audit_url`          |       string | (required) | Destination URL to POST/PUT audit events                                             |
+| `audit_method`       |       string |     `POST` | Allowed: `POST`, `PUT`                                                               |
+| `async`              |         bool |     `true` | If `true`, send via background workers                                               |
+| `timeout_ms`         |          int |     `5000` | HTTP client timeout                                                                  |
+| `queue_size`         |          int |     `1000` | Async queue length                                                                   |
+| `worker_count`       |          int |        `2` | Async worker count                                                                   |
+| `drop_on_queue_full` |         bool |     `true` | Drop+log when queue is full                                                          |
+| `max_body_bytes`     |        int64 |  `1048576` | Capture limit for request/response bodies                                            |
+| `include_raw_req`    |         bool |    `false` | Include `req` object in audit payload                                                |
+| `include_raw_res`    |         bool |    `false` | Include `res` object in audit payload                                                |
+| `audit_headers`      |          map |       `{}` | Outbound headers for the audit request                                               |
+| `audit_bearer_token` |       string |       `""` | Convenience to set `Authorization: Bearer …` (unless already set in `audit_headers`) |
+| `remap`              | object/array |       `{}` | Structured remap template (see below)                                                |
+| `remap_flatten`      |         bool |    `false` | Flattens nested JSONPath results                                                     |
 
 ## Remap input schema
 
@@ -78,7 +79,7 @@ Top-level keys:
 - `$.ctx.duration_ms` (int)
 - `$.ctx.gen.uuid` (string): generated UUID v4 for this request
 
-## `remap_json` semantics
+## `remap` semantics
 
 - Any string value beginning with `$` is treated as a JSONPath expression.
 - Any other string value is treated as a literal string.
@@ -94,25 +95,28 @@ JSONPath result shaping:
 
 ## Example
 
-### Minimal audit
+### Minimal audit (YAML)
 
-```json
-{
-	"audit_url": "https://audit.example.com/events",
-	"async": "true"
-}
+```yaml
+audit_url: https://audit.example.com/events
+async: true
+remap: {}
 ```
 
-### Bearer token + mapped payload
+### Bearer token + headers + mapped payload
 
-```json
-{
-	"audit_url": "https://audit.example.com/events",
-	"audit_bearer_token": "YOUR_TOKEN",
-	"include_raw_req": "false",
-	"include_raw_res": "false",
-	"remap_json": "{\"request_id\":\"uuid()\",\"txn\":\"$.req.body.context.transaction_id\",\"status\":\"$.res.status\",\"session\":\"$.req.cookies.session_id\"}"
-}
+```yaml
+audit_url: https://audit.example.com/events
+audit_bearer_token: YOUR_TOKEN
+include_raw_req: false
+include_raw_res: false
+audit_headers:
+  X-Env: prod
+remap:
+  request_id: uuid()
+  txn: "$.req.body.context.transaction_id"
+  status: "$.res.status"
+  session: "$.req.cookies.session_id"
 ```
 
 Notes:

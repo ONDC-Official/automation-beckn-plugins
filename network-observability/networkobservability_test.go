@@ -7,12 +7,25 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
+func writeTempYAML(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "network-observability.yaml")
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+	return p
+}
+
 func TestParseConfigDefaults(t *testing.T) {
-	cfg, err := parseConfig(map[string]string{})
+	path := writeTempYAML(t, "audit_url: http://example.com\n")
+	cfg, err := parseConfigFile(path)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -43,7 +56,8 @@ func TestParseConfigDefaults(t *testing.T) {
 }
 
 func TestParseConfigInvalidMethod(t *testing.T) {
-	_, err := parseConfig(map[string]string{"audit_method": "PATCH"})
+	path := writeTempYAML(t, "audit_url: http://example.com\naudit_method: PATCH\n")
+	_, err := parseConfigFile(path)
 	if err == nil {
 		t.Fatalf("expected error")
 	}
@@ -99,14 +113,21 @@ func TestAuditSyncWithBearerTokenAndRemap(t *testing.T) {
 	}))
 	defer server.Close()
 
-	mw, err := NewNetworkObservabilityMiddleware(context.Background(), map[string]string{
-		"audit_url":          server.URL,
-		"async":              "false",
-		"audit_bearer_token": "TOKEN",
-		"include_raw_req":    "true",
-		"include_raw_res":    "true",
-		"remap_json":         "{\"method\":\"$.req.method\",\"sid\":\"$.req.cookies.sid\",\"status\":\"$.res.status\",\"id\":\"uuid()\",\"id2\":\"$.ctx.gen.uuid\"}",
-	})
+	configPath := writeTempYAML(t, ""+
+		"audit_url: " + server.URL + "\n"+
+		"async: false\n"+
+		"audit_bearer_token: TOKEN\n"+
+		"include_raw_req: true\n"+
+		"include_raw_res: true\n"+
+		"remap:\n"+
+		"  method: \"$.req.method\"\n"+
+		"  sid: \"$.req.cookies.sid\"\n"+
+		"  status: \"$.res.status\"\n"+
+		"  id: \"uuid()\"\n"+
+		"  id2: \"$.ctx.gen.uuid\"\n",
+	)
+
+	mw, err := NewNetworkObservabilityMiddleware(context.Background(), configPath)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -167,13 +188,16 @@ func TestAuditHeadersJsonAuthorizationNotOverridden(t *testing.T) {
 	}))
 	defer server.Close()
 
-	mw, err := NewNetworkObservabilityMiddleware(context.Background(), map[string]string{
-		"audit_url":          server.URL,
-		"async":              "false",
-		"audit_bearer_token": "TOKEN",
-		"audit_headers_json": "{\"Authorization\":\"Custom\"}",
-		"remap_json":         "{}",
-	})
+	configPath := writeTempYAML(t, ""+
+		"audit_url: " + server.URL + "\n"+
+		"async: false\n"+
+		"audit_bearer_token: TOKEN\n"+
+		"audit_headers:\n"+
+		"  Authorization: Custom\n"+
+		"remap: {}\n",
+	)
+
+	mw, err := NewNetworkObservabilityMiddleware(context.Background(), configPath)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -201,13 +225,15 @@ func TestAuditAsyncDispatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	mw, err := NewNetworkObservabilityMiddleware(context.Background(), map[string]string{
-		"audit_url":    server.URL,
-		"async":        "true",
-		"queue_size":   "10",
-		"worker_count": "1",
-		"remap_json":   "{}",
-	})
+	configPath := writeTempYAML(t, ""+
+		"audit_url: " + server.URL + "\n"+
+		"async: true\n"+
+		"queue_size: 10\n"+
+		"worker_count: 1\n"+
+		"remap: {}\n",
+	)
+
+	mw, err := NewNetworkObservabilityMiddleware(context.Background(), configPath)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
