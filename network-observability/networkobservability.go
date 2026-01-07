@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,22 +23,32 @@ import (
 
 	"github.com/AsaiYusuke/jsonpath"
 	"github.com/beckn-one/beckn-onix/pkg/log"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
+	Transport       string
 	AuditURL        string
 	AuditMethod     string
 	Async           bool
 	Timeout         time.Duration
+	GRPCTarget      string
+	GRPCInsecure    bool
+	GRPCTimeout     time.Duration
+	GRPCMethod      string
 	QueueSize       int
 	WorkerCount     int
 	MaxBodyBytes    int64
-	IncludeRawReq   bool
-	IncludeRawRes   bool
 	AuditHeaders    map[string]string
 	BearerToken     string
-	RemapFlatten    bool
+	GRPCHeaders     map[string]string
+	GRPCBearerToken string
 	DropOnQueueFull bool
 	RemapTemplate   any
 }
@@ -45,20 +56,24 @@ type Config struct {
 // FileConfig is the YAML configuration schema.
 // This keeps configuration structured (no JSON-in-string for remap).
 type FileConfig struct {
+	Transport       string            `yaml:"transport"`
 	AuditURL        string            `yaml:"audit_url"`
 	AuditMethod     string            `yaml:"audit_method"`
 	Async           *bool             `yaml:"async"`
 	TimeoutMs       *int              `yaml:"timeout_ms"`
+	GRPCTarget      string            `yaml:"grpc_target"`
+	GRPCInsecure    *bool             `yaml:"grpc_insecure"`
+	GRPCTimeoutMs   *int              `yaml:"grpc_timeout_ms"`
+	GRPCMethod      string            `yaml:"grpc_method"`
 	QueueSize       *int              `yaml:"queue_size"`
 	WorkerCount     *int              `yaml:"worker_count"`
 	MaxBodyBytes    *int64            `yaml:"max_body_bytes"`
-	IncludeRawReq   *bool             `yaml:"include_raw_req"`
-	IncludeRawRes   *bool             `yaml:"include_raw_res"`
 	Remap           any               `yaml:"remap"`
-	RemapFlatten    *bool             `yaml:"remap_flatten"`
 	DropOnQueueFull *bool             `yaml:"drop_on_queue_full"`
 	AuditHeaders    map[string]string `yaml:"audit_headers"`
 	BearerToken     string            `yaml:"audit_bearer_token"`
+	GRPCHeaders     map[string]string `yaml:"grpc_headers"`
+	GRPCBearerToken string            `yaml:"grpc_bearer_token"`
 }
 
 // NewNetworkObservabilityMiddleware loads plugin configuration from a YAML file.
@@ -71,28 +86,62 @@ func NewNetworkObservabilityMiddleware(ctx context.Context, configPath string) (
 }
 
 func newMiddlewareFromConfig(ctx context.Context, parsed Config) (func(http.Handler) http.Handler, error) {
-	if parsed.AuditURL == "" {
-		log.Warnf(ctx, "network-observability: audit_url is empty; middleware is a no-op")
-		return func(next http.Handler) http.Handler { return next }, nil
+	transport := strings.ToLower(strings.TrimSpace(parsed.Transport))
+	if transport == "" {
+		transport = "http"
 	}
 
-	auditURL, err := url.Parse(parsed.AuditURL)
-	if err != nil {
-		return nil, err
-	}
-
-	headers := map[string]string{}
-	for k, v := range parsed.AuditHeaders {
-		headers[k] = v
-	}
-	if parsed.BearerToken != "" {
-		if _, ok := headers["Authorization"]; !ok {
-			headers["Authorization"] = "Bearer " + parsed.BearerToken
+	var sender auditSender
+	switch transport {
+	case "http":
+		if strings.TrimSpace(parsed.AuditURL) == "" {
+			log.Warnf(ctx, "network-observability: audit_url is empty; middleware is a no-op")
+			return func(next http.Handler) http.Handler { return next }, nil
 		}
+		auditURL, err := url.Parse(parsed.AuditURL)
+		if err != nil {
+			return nil, err
+		}
+		headers := cloneStringMap(parsed.AuditHeaders)
+		if parsed.BearerToken != "" {
+			setAuthorizationIfMissing(headers, "Bearer "+parsed.BearerToken)
+		}
+		client := &http.Client{Timeout: parsed.Timeout}
+		sender = &httpAuditSender{client: client, url: auditURL.String(), method: parsed.AuditMethod, headers: headers}
+	case "grpc":
+		if strings.TrimSpace(parsed.GRPCTarget) == "" {
+			log.Warnf(ctx, "network-observability: grpc_target is empty; middleware is a no-op")
+			return func(next http.Handler) http.Handler { return next }, nil
+		}
+		dialCtx := ctx
+		if dialCtx == nil {
+			dialCtx = context.Background()
+		}
+		if parsed.GRPCTimeout > 0 {
+			var cancel context.CancelFunc
+			dialCtx, cancel = context.WithTimeout(dialCtx, parsed.GRPCTimeout)
+			defer cancel()
+		}
+		opts := []grpc.DialOption{grpc.WithBlock()}
+		if parsed.GRPCInsecure {
+			opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		} else {
+			opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
+		}
+		conn, err := grpc.DialContext(dialCtx, parsed.GRPCTarget, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("network-observability: failed to dial grpc_target %s: %w", parsed.GRPCTarget, err)
+		}
+		headers := cloneStringMap(parsed.GRPCHeaders)
+		if parsed.GRPCBearerToken != "" {
+			setAuthorizationIfMissing(headers, "Bearer "+parsed.GRPCBearerToken)
+		}
+		sender = &grpcAuditSender{conn: conn, timeout: parsed.GRPCTimeout, headers: headers, method: parsed.GRPCMethod}
+	default:
+		return nil, fmt.Errorf("network-observability: unsupported transport %q (allowed: http, grpc)", parsed.Transport)
 	}
 
-	client := &http.Client{Timeout: parsed.Timeout}
-	dispatcher := newAuditDispatcher(ctx, client, auditURL.String(), parsed.AuditMethod, headers, parsed.QueueSize, parsed.WorkerCount, parsed.DropOnQueueFull)
+	dispatcher := newAuditDispatcher(ctx, sender, parsed.QueueSize, parsed.WorkerCount, parsed.DropOnQueueFull)
 
 	remapTemplate := parsed.RemapTemplate
 	if remapTemplate == nil {
@@ -107,34 +156,47 @@ func newMiddlewareFromConfig(ctx context.Context, parsed Config) (func(http.Hand
 				requestUUID = ""
 			}
 
-			_, reqBodyBytes, reqTruncated := captureRequestBody(r, parsed.MaxBodyBytes)
+			_, reqBodyBytes, _ := captureRequestBody(r, parsed.MaxBodyBytes)
 
 			crw := newCaptureResponseWriter(w, parsed.MaxBodyBytes)
 			start := time.Now()
 			next.ServeHTTP(crw, r)
 			durationMs := time.Since(start).Milliseconds()
 
-			resBodyBytes, resTruncated := crw.bodyBytes()
+			resBodyBytes, _ := crw.bodyBytes()
 
-			remapInput := buildRemapInput(r, reqBodyBytes, reqTruncated, crw, resBodyBytes, resTruncated, requestUUID, durationMs)
-			mapped := applyRemap(remapInput, remapTemplate, requestUUID, parsed.RemapFlatten)
+			requestBody := parseJSONObjectOrEmpty(reqBodyBytes)
+			responseBody := parseJSONObjectOrEmpty(resBodyBytes)
+			sid := ""
+			for _, c := range r.Cookies() {
+				if c != nil && c.Name == "sid" {
+					sid = c.Value
+					break
+				}
+			}
 
-			auditPayload := map[string]any{
-				"ts":     time.Now().UTC().Format(time.RFC3339Nano),
-				"mapped": mapped,
+			remapInput := map[string]any{
+				"requestBody":  requestBody,
+				"responseBody": responseBody,
 				"ctx": map[string]any{
-					"gen": map[string]any{"uuid": requestUUID},
+					"ts":          time.Now().UTC().Format(time.RFC3339Nano),
+					"duration_ms": durationMs,
+					"uuid":        requestUUID,
+					"method":      r.Method,
+					"path":        r.URL.Path,
+					"status":      crw.StatusCode(),
+					"sid":         sid,
 				},
 			}
 
-			if parsed.IncludeRawReq {
-				auditPayload["req"] = remapInput["req"]
-			}
-			if parsed.IncludeRawRes {
-				auditPayload["res"] = remapInput["res"]
+			additionalData := applyRemap(remapInput, remapTemplate, requestUUID)
+			payload := map[string]any{
+				"requestBody":    requestBody,
+				"responseBody":   responseBody,
+				"additionalData": additionalData,
 			}
 
-			body, marshalErr := json.Marshal(auditPayload)
+			body, marshalErr := json.Marshal(payload)
 			if marshalErr != nil {
 				log.Errorf(r.Context(), marshalErr, "network-observability: failed to marshal audit payload")
 				return
@@ -165,12 +227,29 @@ func parseConfigFile(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("network-observability: failed to parse YAML: %w", err)
 	}
 
+	transport := strings.ToLower(strings.TrimSpace(fileCfg.Transport))
+	grpcTarget := strings.TrimSpace(fileCfg.GRPCTarget)
+	if transport == "" {
+		if grpcTarget != "" {
+			transport = "grpc"
+		} else {
+			transport = "http"
+		}
+	}
+
+	grpcMethod := strings.TrimSpace(fileCfg.GRPCMethod)
+	if grpcMethod == "" {
+		grpcMethod = "/beckn.audit.v1.AuditService/LogEvent"
+	}
+
 	auditMethod := strings.ToUpper(strings.TrimSpace(fileCfg.AuditMethod))
 	if auditMethod == "" {
 		auditMethod = http.MethodPost
 	}
-	if auditMethod != http.MethodPost && auditMethod != http.MethodPut {
-		return Config{}, errors.New("network-observability: unsupported audit_method (allowed: POST, PUT)")
+	if transport == "http" {
+		if auditMethod != http.MethodPost && auditMethod != http.MethodPut {
+			return Config{}, errors.New("network-observability: unsupported audit_method (allowed: POST, PUT)")
+		}
 	}
 
 	async := true
@@ -180,6 +259,10 @@ func parseConfigFile(configPath string) (Config, error) {
 	timeoutMs := 5000
 	if fileCfg.TimeoutMs != nil && *fileCfg.TimeoutMs > 0 {
 		timeoutMs = *fileCfg.TimeoutMs
+	}
+	grpcTimeoutMs := timeoutMs
+	if fileCfg.GRPCTimeoutMs != nil && *fileCfg.GRPCTimeoutMs > 0 {
+		grpcTimeoutMs = *fileCfg.GRPCTimeoutMs
 	}
 	queueSize := 1000
 	if fileCfg.QueueSize != nil && *fileCfg.QueueSize > 0 {
@@ -196,37 +279,34 @@ func parseConfigFile(configPath string) (Config, error) {
 			maxBodyBytes = 0
 		}
 	}
-	includeRawReq := false
-	if fileCfg.IncludeRawReq != nil {
-		includeRawReq = *fileCfg.IncludeRawReq
-	}
-	includeRawRes := false
-	if fileCfg.IncludeRawRes != nil {
-		includeRawRes = *fileCfg.IncludeRawRes
-	}
-	remapFlatten := false
-	if fileCfg.RemapFlatten != nil {
-		remapFlatten = *fileCfg.RemapFlatten
-	}
 	dropOnQueueFull := true
 	if fileCfg.DropOnQueueFull != nil {
 		dropOnQueueFull = *fileCfg.DropOnQueueFull
 	}
 
+	grpcInsecure := false
+	if fileCfg.GRPCInsecure != nil {
+		grpcInsecure = *fileCfg.GRPCInsecure
+	}
+
 	return Config{
+		Transport:       transport,
 		AuditURL:        strings.TrimSpace(fileCfg.AuditURL),
 		AuditMethod:     auditMethod,
 		Async:           async,
 		Timeout:         time.Duration(timeoutMs) * time.Millisecond,
+		GRPCTarget:      grpcTarget,
+		GRPCInsecure:    grpcInsecure,
+		GRPCTimeout:     time.Duration(grpcTimeoutMs) * time.Millisecond,
+		GRPCMethod:      grpcMethod,
 		QueueSize:       queueSize,
 		WorkerCount:     workerCount,
 		MaxBodyBytes:    maxBodyBytes,
-		IncludeRawReq:   includeRawReq,
-		IncludeRawRes:   includeRawRes,
-		RemapFlatten:    remapFlatten,
 		DropOnQueueFull: dropOnQueueFull,
 		AuditHeaders:    fileCfg.AuditHeaders,
 		BearerToken:     strings.TrimSpace(fileCfg.BearerToken),
+		GRPCHeaders:     fileCfg.GRPCHeaders,
+		GRPCBearerToken: strings.TrimSpace(fileCfg.GRPCBearerToken),
 		RemapTemplate:   fileCfg.Remap,
 	}, nil
 }
@@ -310,7 +390,7 @@ func (w *captureResponseWriter) Flush() {
 func (w *captureResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	h, ok := w.ResponseWriter.(http.Hijacker)
 	if !ok {
-		return nil, nil, errors.New("hijacker not supported")
+		return nil, nil, http.ErrNotSupported
 	}
 	return h.Hijack()
 }
@@ -323,11 +403,20 @@ func (w *captureResponseWriter) Push(target string, opts *http.PushOptions) erro
 	return p.Push(target, opts)
 }
 
+
+func parseJSONObjectOrEmpty(b []byte) map[string]any {
+	v, ok := tryParseJSON(b)
+	if !ok {
+		return map[string]any{}
+	}
+	m, ok := v.(map[string]any)
+	if !ok || m == nil {
+		return map[string]any{}
+	}
+	return m
+}
 type auditDispatcher struct {
-	client          *http.Client
-	url             string
-	method          string
-	headers         map[string]string
+	sender          auditSender
 	ch              chan auditJob
 	workerCount     int
 	dropOnQueueFull bool
@@ -340,12 +429,82 @@ type auditJob struct {
 	body []byte
 }
 
-func newAuditDispatcher(baseCtx context.Context, client *http.Client, url, method string, headers map[string]string, queueSize, workerCount int, dropOnQueueFull bool) *auditDispatcher {
+
+type auditSender interface {
+	Send(ctx context.Context, body []byte) error
+}
+
+type httpAuditSender struct {
+	client  *http.Client
+	url     string
+	method  string
+	headers map[string]string
+}
+
+func (s *httpAuditSender) Send(ctx context.Context, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, s.method, s.url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range s.headers {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Warnf(ctx, "network-observability: audit dispatch got status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+type grpcAuditSender struct {
+	conn    *grpc.ClientConn
+	timeout time.Duration
+	headers map[string]string
+	method  string
+}
+
+func (s *grpcAuditSender) Send(ctx context.Context, body []byte) error {
+	callCtx := ctx
+	if s.timeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, s.timeout)
+		defer cancel()
+	}
+	md := metadata.MD{}
+	for k, v := range s.headers {
+		lk := strings.ToLower(strings.TrimSpace(k))
+		if lk == "" {
+			continue
+		}
+		md.Append(lk, v)
+	}
+	if len(md) > 0 {
+		callCtx = metadata.NewOutgoingContext(callCtx, md)
+	}
+
+	fullMethod := strings.TrimSpace(s.method)
+	if fullMethod == "" {
+		fullMethod = "/beckn.audit.v1.AuditService/LogEvent"
+	}
+
+	req := wrapperspb.Bytes(body)
+	res := &emptypb.Empty{}
+	return s.conn.Invoke(callCtx, fullMethod, req, res)
+}
+
+func newAuditDispatcher(baseCtx context.Context, sender auditSender, queueSize, workerCount int, dropOnQueueFull bool) *auditDispatcher {
 	return &auditDispatcher{
-		client:          client,
-		url:             url,
-		method:          method,
-		headers:         headers,
+		sender:          sender,
 		ch:              make(chan auditJob, queueSize),
 		workerCount:     workerCount,
 		dropOnQueueFull: dropOnQueueFull,
@@ -386,29 +545,26 @@ func (d *auditDispatcher) sendNow(ctx context.Context, body []byte) {
 	if requestCtx == nil {
 		requestCtx = d.baseCtx
 	}
-	req, err := http.NewRequestWithContext(requestCtx, d.method, d.url, bytes.NewReader(body))
-	if err != nil {
-		log.Errorf(requestCtx, err, "network-observability: failed to create audit request")
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range d.headers {
-		if strings.TrimSpace(k) == "" {
-			continue
-		}
-		req.Header.Set(k, v)
-	}
-
-	resp, err := d.client.Do(req)
-	if err != nil {
+	if err := d.sender.Send(requestCtx, body); err != nil {
 		log.Errorf(requestCtx, err, "network-observability: audit dispatch failed")
-		return
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Warnf(requestCtx, "network-observability: audit dispatch got status %d", resp.StatusCode)
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range in {
+		out[k] = v
 	}
+	return out
+}
+
+func setAuthorizationIfMissing(headers map[string]string, value string) {
+	for k := range headers {
+		if strings.EqualFold(strings.TrimSpace(k), "authorization") {
+			return
+		}
+	}
+	headers["Authorization"] = value
 }
 
 func buildRemapInput(r *http.Request, reqBody []byte, reqTruncated bool, crw *captureResponseWriter, resBody []byte, resTruncated bool, requestUUID string, durationMs int64) map[string]any {
@@ -525,18 +681,18 @@ func bytesToStringOrBase64(b []byte) any {
 	return map[string]any{"base64": base64.StdEncoding.EncodeToString(b)}
 }
 
-func applyRemap(root any, template any, requestUUID string, flatten bool) any {
+func applyRemap(root any, template any, requestUUID string) any {
 	switch t := template.(type) {
 	case map[string]any:
 		out := map[string]any{}
 		for k, v := range t {
-			out[k] = applyRemap(root, v, requestUUID, flatten)
+			out[k] = applyRemap(root, v, requestUUID)
 		}
 		return out
 	case []any:
 		out := make([]any, 0, len(t))
 		for _, v := range t {
-			out = append(out, applyRemap(root, v, requestUUID, flatten))
+			out = append(out, applyRemap(root, v, requestUUID))
 		}
 		return out
 	case string:
@@ -552,7 +708,7 @@ func applyRemap(root any, template any, requestUUID string, flatten bool) any {
 			return time.Now().UTC().Format(time.RFC3339Nano)
 		}
 		if strings.HasPrefix(expr, "$") {
-			return evalJSONPath(root, expr, flatten)
+			return evalJSONPath(root, expr)
 		}
 		return t
 	default:
@@ -560,13 +716,10 @@ func applyRemap(root any, template any, requestUUID string, flatten bool) any {
 	}
 }
 
-func evalJSONPath(root any, expr string, flatten bool) any {
+func evalJSONPath(root any, expr string) any {
 	results, err := jsonpath.Retrieve(expr, root)
 	if err != nil {
 		return nil
-	}
-	if flatten {
-		results = flattenAnySlice(results)
 	}
 	if len(results) == 0 {
 		return nil
@@ -575,25 +728,6 @@ func evalJSONPath(root any, expr string, flatten bool) any {
 		return results[0]
 	}
 	return results
-}
-
-func flattenAnySlice(in []any) []any {
-	var out []any
-	var walk func(v any)
-	walk = func(v any) {
-		s, ok := v.([]any)
-		if ok {
-			for _, item := range s {
-				walk(item)
-			}
-			return
-		}
-		out = append(out, v)
-	}
-	for _, v := range in {
-		walk(v)
-	}
-	return out
 }
 
 func uuidV4() (string, error) {

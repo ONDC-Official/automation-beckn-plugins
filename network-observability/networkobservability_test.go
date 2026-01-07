@@ -5,13 +5,59 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
+
+type auditServiceServer interface {
+	LogEvent(context.Context, *wrapperspb.BytesValue) (*emptypb.Empty, error)
+}
+
+type auditSvc struct {
+	got chan []byte
+}
+
+func (s *auditSvc) LogEvent(_ context.Context, in *wrapperspb.BytesValue) (*emptypb.Empty, error) {
+	s.got <- append([]byte(nil), in.Value...)
+	return &emptypb.Empty{}, nil
+}
+
+func registerAuditService(s *grpc.Server, impl auditServiceServer) {
+	s.RegisterService(&grpc.ServiceDesc{
+		ServiceName: "beckn.audit.v1.AuditService",
+		HandlerType: (*auditServiceServer)(nil),
+		Methods: []grpc.MethodDesc{
+			{
+				MethodName: "LogEvent",
+				Handler: func(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+					in := new(wrapperspb.BytesValue)
+					if err := dec(in); err != nil {
+						return nil, err
+					}
+					if interceptor == nil {
+						return srv.(auditServiceServer).LogEvent(ctx, in)
+					}
+					info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/beckn.audit.v1.AuditService/LogEvent"}
+					handler := func(ctx context.Context, req any) (any, error) {
+						return srv.(auditServiceServer).LogEvent(ctx, req.(*wrapperspb.BytesValue))
+					}
+					return interceptor(ctx, in, info, handler)
+				},
+			},
+		},
+		Streams:  []grpc.StreamDesc{},
+		Metadata: "proto/audit.proto",
+	}, impl)
+}
 
 func writeTempYAML(t *testing.T, content string) string {
 	t.Helper()
@@ -47,9 +93,6 @@ func TestParseConfigDefaults(t *testing.T) {
 	if cfg.MaxBodyBytes != 1024*1024 {
 		t.Fatalf("expected max_body_bytes 1048576, got %d", cfg.MaxBodyBytes)
 	}
-	if cfg.IncludeRawReq || cfg.IncludeRawRes {
-		t.Fatalf("expected include_raw_* defaults false")
-	}
 	if !cfg.DropOnQueueFull {
 		t.Fatalf("expected drop_on_queue_full default true")
 	}
@@ -60,6 +103,14 @@ func TestParseConfigInvalidMethod(t *testing.T) {
 	_, err := parseConfigFile(path)
 	if err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+func TestParseConfigGrpcDoesNotValidateHTTPMethod(t *testing.T) {
+	path := writeTempYAML(t, "transport: grpc\ngrpc_target: 127.0.0.1:12345\naudit_method: PATCH\n")
+	_, err := parseConfigFile(path)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 }
 
@@ -117,14 +168,12 @@ func TestAuditSyncWithBearerTokenAndRemap(t *testing.T) {
 		"audit_url: " + server.URL + "\n"+
 		"async: false\n"+
 		"audit_bearer_token: TOKEN\n"+
-		"include_raw_req: true\n"+
-		"include_raw_res: true\n"+
 		"remap:\n"+
-		"  method: \"$.req.method\"\n"+
-		"  sid: \"$.req.cookies.sid\"\n"+
-		"  status: \"$.res.status\"\n"+
+		"  method: \"$.ctx.method\"\n"+
+		"  sid: \"$.ctx.sid\"\n"+
+		"  status: \"$.ctx.status\"\n"+
 		"  id: \"uuid()\"\n"+
-		"  id2: \"$.ctx.gen.uuid\"\n",
+		"  id2: \"$.ctx.uuid\"\n",
 	)
 
 	mw, err := NewNetworkObservabilityMiddleware(context.Background(), configPath)
@@ -144,36 +193,46 @@ func TestAuditSyncWithBearerTokenAndRemap(t *testing.T) {
 
 	select {
 	case payload := <-received:
-		mapped, ok := payload["mapped"].(map[string]any)
+		requestBody, ok := payload["requestBody"].(map[string]any)
 		if !ok {
-			t.Fatalf("expected mapped object")
+			t.Fatalf("expected requestBody object")
 		}
-		if mapped["method"] != "GET" {
-			t.Fatalf("expected method GET, got %#v", mapped["method"])
+		if requestBody["context"] == nil {
+			t.Fatalf("expected requestBody.context present")
 		}
-		if mapped["sid"] != "123" {
-			t.Fatalf("expected sid 123, got %#v", mapped["sid"])
-		}
-		status, ok := mapped["status"].(float64)
+
+		responseBody, ok := payload["responseBody"].(map[string]any)
 		if !ok {
-			t.Fatalf("expected numeric status, got %#v", mapped["status"])
+			t.Fatalf("expected responseBody object")
+		}
+		if responseBody["ok"] != true {
+			t.Fatalf("expected responseBody.ok true, got %#v", responseBody["ok"])
+		}
+
+		additional, ok := payload["additionalData"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected additionalData object")
+		}
+		if additional["method"] != "GET" {
+			t.Fatalf("expected method GET, got %#v", additional["method"])
+		}
+		if additional["sid"] != "123" {
+			t.Fatalf("expected sid 123, got %#v", additional["sid"])
+		}
+		status, ok := additional["status"].(float64)
+		if !ok {
+			t.Fatalf("expected numeric status, got %#v", additional["status"])
 		}
 		if int(status) != 201 {
-			t.Fatalf("expected status 201, got %#v", mapped["status"])
+			t.Fatalf("expected status 201, got %#v", additional["status"])
 		}
-		id, _ := mapped["id"].(string)
-		id2, _ := mapped["id2"].(string)
+		id, _ := additional["id"].(string)
+		id2, _ := additional["id2"].(string)
 		if id == "" || id2 == "" {
 			t.Fatalf("expected non-empty ids")
 		}
 		if id != id2 {
-			t.Fatalf("expected uuid() == $.ctx.gen.uuid")
-		}
-		if _, ok := payload["req"]; !ok {
-			t.Fatalf("expected req included")
-		}
-		if _, ok := payload["res"]; !ok {
-			t.Fatalf("expected res included")
+			t.Fatalf("expected uuid() == $.ctx.uuid")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timed out waiting for audit")
@@ -248,6 +307,71 @@ func TestAuditAsyncDispatch(t *testing.T) {
 		// ok
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timed out waiting for async audit")
+	}
+}
+
+func TestAuditSyncGrpcDispatch(t *testing.T) {
+	got := make(chan []byte, 1)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	grpcServer := grpc.NewServer()
+	registerAuditService(grpcServer, &auditSvc{got: got})
+	go func() { _ = grpcServer.Serve(listener) }()
+	defer grpcServer.Stop()
+
+	configPath := writeTempYAML(t, ""+
+		"transport: grpc\n"+
+		"grpc_target: "+listener.Addr().String()+"\n"+
+		"grpc_insecure: true\n"+
+		"async: false\n"+
+		"remap:\n"+
+		"  method: \"$.ctx.method\"\n"+
+		"  status: \"$.ctx.status\"\n"+
+		"  id: \"uuid()\"\n",
+	)
+
+	mw, err := NewNetworkObservabilityMiddleware(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://example.com/", nil))
+
+	select {
+	case b := <-got:
+		var payload map[string]any
+		if err := json.Unmarshal(b, &payload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		additional, ok := payload["additionalData"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected additionalData object")
+		}
+		if additional["method"] != "GET" {
+			t.Fatalf("expected method GET, got %#v", additional["method"])
+		}
+		status, ok := additional["status"].(float64)
+		if !ok {
+			t.Fatalf("expected numeric status, got %#v", additional["status"])
+		}
+		if int(status) != 201 {
+			t.Fatalf("expected status 201, got %#v", additional["status"])
+		}
+		id, _ := additional["id"].(string)
+		if id == "" {
+			t.Fatalf("expected non-empty id")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for grpc audit")
 	}
 }
 

@@ -3,9 +3,10 @@
 This plugin provides an `http.Handler` middleware that:
 
 - Captures HTTP request + response data (bounded by size).
-- Builds a canonical JSON object (`$.req`, `$.res`, `$.ctx`) for remapping.
+- Emits a fixed JSON payload `{ requestBody, responseBody, additionalData }`.
+- Builds a canonical JSON object (`$.requestBody`, `$.responseBody`, `$.ctx`) for remapping `additionalData`.
 - Applies a configurable remap using JSONPath (same library/dialect used in validator).
-- Posts an audit event to a configured `audit_url` either synchronously or asynchronously.
+- Sends the payload to a configured destination (HTTP or gRPC) either synchronously or asynchronously.
 
 ## Configuration (YAML)
 
@@ -23,22 +24,44 @@ Supported keys (first match wins):
 
 ### YAML schema
 
-| Key                  |         Type |    Default | Notes                                                                                |
-| -------------------- | -----------: | ---------: | ------------------------------------------------------------------------------------ |
-| `audit_url`          |       string | (required) | Destination URL to POST/PUT audit events                                             |
-| `audit_method`       |       string |     `POST` | Allowed: `POST`, `PUT`                                                               |
-| `async`              |         bool |     `true` | If `true`, send via background workers                                               |
-| `timeout_ms`         |          int |     `5000` | HTTP client timeout                                                                  |
-| `queue_size`         |          int |     `1000` | Async queue length                                                                   |
-| `worker_count`       |          int |        `2` | Async worker count                                                                   |
-| `drop_on_queue_full` |         bool |     `true` | Drop+log when queue is full                                                          |
-| `max_body_bytes`     |        int64 |  `1048576` | Capture limit for request/response bodies                                            |
-| `include_raw_req`    |         bool |    `false` | Include `req` object in audit payload                                                |
-| `include_raw_res`    |         bool |    `false` | Include `res` object in audit payload                                                |
-| `audit_headers`      |          map |       `{}` | Outbound headers for the audit request                                               |
-| `audit_bearer_token` |       string |       `""` | Convenience to set `Authorization: Bearer …` (unless already set in `audit_headers`) |
-| `remap`              | object/array |       `{}` | Structured remap template (see below)                                                |
-| `remap_flatten`      |         bool |    `false` | Flattens nested JSONPath results                                                     |
+| Key                  |         Type |      Default | Notes                                                                                      |
+| -------------------- | -----------: | -----------: | ------------------------------------------------------------------------------------------ |
+| `transport`          |       string |       `http` | Allowed: `http`, `grpc`. If omitted and `grpc_target` is set, transport defaults to `grpc` |
+| `audit_url`          |       string |   (required) | **HTTP only**. Destination URL to POST/PUT audit events                                    |
+| `audit_method`       |       string |       `POST` | **HTTP only**. Allowed: `POST`, `PUT`                                                      |
+| `timeout_ms`         |          int |       `5000` | **HTTP only**. HTTP client timeout                                                         |
+| `audit_headers`      |          map |         `{}` | **HTTP only**. Outbound headers for the audit request                                      |
+| `audit_bearer_token` |       string |         `""` | **HTTP only**. Convenience to set `Authorization: Bearer …` (unless already set)           |
+| `grpc_target`        |       string |         `""` | **gRPC only**. Target passed to `grpc.Dial` (e.g. `host:port`)                             |
+| `grpc_insecure`      |         bool |      `false` | **gRPC only**. If `true`, uses insecure transport credentials                              |
+| `grpc_timeout_ms`    |          int | `timeout_ms` | **gRPC only**. Per-RPC timeout (and dial timeout)                                          |
+| `grpc_method`        |       string |      (audit) | **gRPC only**. Full gRPC method (e.g. `/beckn.audit.v1.AuditService/LogEvent`)             |
+| `grpc_headers`       |          map |         `{}` | **gRPC only**. Outgoing metadata (lowercased keys)                                         |
+| `grpc_bearer_token`  |       string |         `""` | **gRPC only**. Convenience to set `authorization: Bearer …` (unless already set)           |
+| `async`              |         bool |       `true` | If `true`, send via background workers                                                     |
+| `queue_size`         |          int |       `1000` | Async queue length                                                                         |
+| `worker_count`       |          int |          `2` | Async worker count                                                                         |
+| `drop_on_queue_full` |         bool |       `true` | Drop+log when queue is full                                                                |
+| `max_body_bytes`     |        int64 |    `1048576` | Capture limit for request/response bodies                                                  |
+| `remap`              | object/array |         `{}` | Structured remap template (see below)                                                      |
+
+## Outgoing payload schema
+
+The plugin always sends exactly this JSON object (for both HTTP and gRPC):
+
+```json
+{
+	"requestBody": {},
+	"responseBody": {},
+	"additionalData": {}
+}
+```
+
+Notes:
+
+- `requestBody` is always a JSON object. If the incoming request body is empty or not a JSON object, it becomes `{}`.
+- `responseBody` is always a JSON object. If the response body is empty or not a JSON object, it becomes `{}`.
+- `additionalData` is the result of applying the `remap` template.
 
 ## Remap input schema
 
@@ -46,38 +69,19 @@ The remap engine evaluates JSONPath against a canonical root object.
 
 Top-level keys:
 
-- `$.req`: request information
-- `$.res`: response information
-- `$.ctx`: middleware context (generated values, timestamps)
-
-### `$.req`
-
-- `$.req.method` (string)
-- `$.req.host` (string)
-- `$.req.path` (string)
-- `$.req.url` (string)
-- `$.req.remote_addr` (string)
-- `$.req.headers` (object): first-value map of request headers **lowercased**
-- `$.req.headersAll` (object): full header map (lowercased) as arrays
-- `$.req.query` (object): first-value map
-- `$.req.queryAll` (object): full query map as arrays
-- `$.req.cookies` (object): cookie name -> value
-- `$.req.body` (object|null): parsed JSON object if body is valid JSON; otherwise `null`
-- `$.req.bodyRaw` (string|object|null): body as string (if UTF-8) or `{ "base64": "..." }`
-- `$.req.truncated` (bool): body was truncated by `max_body_bytes`
-
-### `$.res`
-
-- `$.res.status` (int)
-- `$.res.headers` / `$.res.headersAll` (same shape rules as request)
-- `$.res.body` / `$.res.bodyRaw`
-- `$.res.truncated` (bool)
+- `$.requestBody`: JSON object (always present)
+- `$.responseBody`: JSON object (always present)
+- `$.ctx`: middleware context
 
 ### `$.ctx`
 
 - `$.ctx.ts` (string RFC3339Nano)
 - `$.ctx.duration_ms` (int)
-- `$.ctx.gen.uuid` (string): generated UUID v4 for this request
+- `$.ctx.uuid` (string): generated UUID v4 for this request
+- `$.ctx.method` (string)
+- `$.ctx.path` (string)
+- `$.ctx.status` (int)
+- `$.ctx.sid` (string): cookie `sid` if present (empty string if absent)
 
 ## `remap` semantics
 
@@ -103,23 +107,62 @@ async: true
 remap: {}
 ```
 
+### gRPC audit
+
+The default gRPC method invoked is `/beckn.audit.v1.AuditService/LogEvent`.
+
+Proto reference: `proto/audit.proto`
+
+```yaml
+transport: grpc
+grpc_target: audit-collector.example.com:443
+grpc_insecure: false
+grpc_timeout_ms: 5000
+grpc_method: /beckn.audit.v1.AuditService/LogEvent
+grpc_headers:
+  x-env: prod
+grpc_bearer_token: YOUR_TOKEN
+async: true
+remap:
+  request_id: uuid()
+  txn: "$.requestBody.context.transaction_id"
+  status: "$.ctx.status"
+```
+
+### gRPC direct to recorder service (no extra service)
+
+If you want the plugin to call the recorder service directly, point `grpc_method` at the recorder RPC and set `payload_mode: mapped`.
+
+```yaml
+transport: grpc
+grpc_target: recorder.example.com:8089
+grpc_insecure: true
+grpc_method: /beckn.recorder.v1.AutomationRecorderService/UpdateTransactionCache
+async: true
+remap:
+  transaction_id: "$.requestBody.context.transaction_id"
+  subscriber_url: "$.requestBody.context.bpp_uri"
+  action: "$.requestBody.context.action"
+  timestamp: "$.requestBody.context.timestamp"
+  api_name: "$.ctx.path"
+  ttl_seconds: 30
+  response: "$.responseBody"
+  cache_ttl_seconds: 600
+```
+
 ### Bearer token + headers + mapped payload
 
 ```yaml
 audit_url: https://audit.example.com/events
 audit_bearer_token: YOUR_TOKEN
-include_raw_req: false
-include_raw_res: false
 audit_headers:
   X-Env: prod
 remap:
   request_id: uuid()
-  txn: "$.req.body.context.transaction_id"
-  status: "$.res.status"
-  session: "$.req.cookies.session_id"
+  txn: "$.requestBody.context.transaction_id"
+  status: "$.ctx.status"
 ```
 
 Notes:
 
-- Header keys are stored lowercased. For hyphenated headers, prefer bracket notation: `$.req.headers['x-request-id']`.
 - This plugin logs failures but never blocks/fails the main request flow.

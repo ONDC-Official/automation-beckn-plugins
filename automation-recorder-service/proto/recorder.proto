@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package beckn.recorder.v1;
+
+option go_package = "automationrecorder/proto;proto";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
+
+// AutomationRecorderService updates existing transaction cache records.
+//
+// This service intentionally does NOT support creating transactions.
+service AutomationRecorderService {
+  // UpdateTransactionCache appends an API interaction entry to an existing transaction.
+  //
+  // Request is a JSON object encoded as bytes:
+  // {
+  //   "transaction_id": "...",
+  //   "subscriber_url": "...",
+  //   "action": "...",
+  //   "timestamp": "...",
+  //   "api_name": "...",
+  //   "ttl_seconds": 30,
+  //   "response": { ... },
+  //   "cache_ttl_seconds": 600
+  // }
+  rpc UpdateTransactionCache(google.protobuf.BytesValue) returns (google.protobuf.Empty);
+}
