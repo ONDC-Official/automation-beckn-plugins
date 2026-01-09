@@ -82,6 +82,9 @@ Top-level keys:
 - `$.ctx.path` (string)
 - `$.ctx.status` (int)
 - `$.ctx.sid` (string): cookie `sid` if present (empty string if absent)
+- `$.ctx.headers` (object): request headers (lowercased keys), first value only
+- `$.ctx.headers_all` (object): request headers (lowercased keys), all values as arrays
+- `$.ctx.cookies` (object): cookies as a simple `{name: value}` map
 
 ## `remap` semantics
 
@@ -129,25 +132,53 @@ remap:
   status: "$.ctx.status"
 ```
 
-### gRPC direct to recorder service (no extra service)
+### gRPC direct to recorder service (local/dev)
 
-If you want the plugin to call the recorder service directly, point `grpc_method` at the recorder RPC and set `payload_mode: mapped`.
+If you want the plugin to call the recorder service directly, point `grpc_method` at the recorder RPC.
+
+Recorder RPC: `/beckn.audit.v1.AuditService/LogEvent`
+
+The plugin will still send the fixed envelope `{requestBody,responseBody,additionalData}`.
+
+The recorder service derives cache + DB fields from `additionalData` (see its `proto/audit.proto`).
 
 ```yaml
 transport: grpc
-grpc_target: recorder.example.com:8089
+grpc_target: 127.0.0.1:8089
 grpc_insecure: true
-grpc_method: /beckn.recorder.v1.AutomationRecorderService/UpdateTransactionCache
+grpc_method: /beckn.audit.v1.AuditService/LogEvent
+grpc_timeout_ms: 5000
 async: true
+
+# The recorder expects these values inside additionalData.
+# Tip: the recorder's Redis transaction key is `transaction_id::subscriber_url` after trimming spaces
+# and trimming a trailing `/` from subscriber_url.
 remap:
+  # Identifiers
+  payload_id: uuid()
   transaction_id: "$.requestBody.context.transaction_id"
+  message_id: "$.requestBody.context.message_id"
+
+  # Choose the correct URI field for your side:
+  # - BPP side: $.requestBody.context.bpp_uri
+  # - BAP side: $.requestBody.context.bap_uri
   subscriber_url: "$.requestBody.context.bpp_uri"
+
+  # Cache metadata
   action: "$.requestBody.context.action"
   timestamp: "$.requestBody.context.timestamp"
   api_name: "$.ctx.path"
+  status_code: "$.ctx.status"
   ttl_seconds: 30
-  response: "$.responseBody"
   cache_ttl_seconds: 600
+
+  # Optional flags used by DB/metrics
+  is_mock: false
+  session_id: "$.ctx.sid" # or map your own session id
+
+  # Optional: pass request headers into DB payload (mirrors TS `reqHeader`)
+  # - Use headers_all if you want to preserve multi-value headers.
+  req_header: "$.ctx.headers_all"
 ```
 
 ### Bearer token + headers + mapped payload

@@ -167,6 +167,8 @@ func newMiddlewareFromConfig(ctx context.Context, parsed Config) (func(http.Hand
 
 			requestBody := parseJSONObjectOrEmpty(reqBodyBytes)
 			responseBody := parseJSONObjectOrEmpty(resBodyBytes)
+			headersFirst, headersAll := headerMaps(r.Header)
+			cookies := cookieMap(r)
 			sid := ""
 			for _, c := range r.Cookies() {
 				if c != nil && c.Name == "sid" {
@@ -186,6 +188,9 @@ func newMiddlewareFromConfig(ctx context.Context, parsed Config) (func(http.Hand
 					"path":        r.URL.Path,
 					"status":      crw.StatusCode(),
 					"sid":         sid,
+					"headers":     headersFirst,
+					"headers_all": headersAll,
+					"cookies":     cookies,
 				},
 			}
 
@@ -203,7 +208,9 @@ func newMiddlewareFromConfig(ctx context.Context, parsed Config) (func(http.Hand
 			}
 
 			if parsed.Async {
-				dispatcher.enqueue(r.Context(), body)
+				// Async sends may happen after the HTTP request finishes; avoid using a
+				// cancelable request context so audit dispatch isn't aborted.
+				dispatcher.enqueue(context.WithoutCancel(r.Context()), body)
 				return
 			}
 

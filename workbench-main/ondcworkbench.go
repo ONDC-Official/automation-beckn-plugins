@@ -133,7 +133,12 @@ func (w *ondcWorkbench) WorkbenchValidateContext(ctx context.Context,request *ht
 		log.Errorf(ctx, err, "context validation: failed to parse payload")
 		return err
 	}
-	cleanUpHttpRequest(request)
-	return w.ContextValidator.ValidateContext(ctx, request, payloadEnv, raw)
+	err = w.ContextValidator.ValidateContext(ctx, request, payloadEnv, raw)
+	if err != nil {
+		log.Errorf(ctx, err, "context validation failed")
+		return err
+	}
+	// cleanUpHttpRequest(request)
+	return nil
 }
 

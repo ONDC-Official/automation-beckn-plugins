@@ -171,6 +171,9 @@ func TestAuditSyncWithBearerTokenAndRemap(t *testing.T) {
 		"remap:\n"+
 		"  method: \"$.ctx.method\"\n"+
 		"  sid: \"$.ctx.sid\"\n"+
+		"  sid2: \"$.ctx.cookies.sid\"\n"+
+		"  foo_cookie: \"$.ctx.cookies.foo\"\n"+
+		"  x_test: \"$.ctx.headers.x-test\"\n"+
 		"  status: \"$.ctx.status\"\n"+
 		"  id: \"uuid()\"\n"+
 		"  id2: \"$.ctx.uuid\"\n",
@@ -188,6 +191,8 @@ func TestAuditSyncWithBearerTokenAndRemap(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/test?x=1", bytes.NewBufferString(`{"context":{"transaction_id":"t1"}}`))
 	req.AddCookie(&http.Cookie{Name: "sid", Value: "123"})
+	req.AddCookie(&http.Cookie{Name: "foo", Value: "bar"})
+	req.Header.Set("X-Test", "abc")
 	rw := httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
 
@@ -218,6 +223,15 @@ func TestAuditSyncWithBearerTokenAndRemap(t *testing.T) {
 		}
 		if additional["sid"] != "123" {
 			t.Fatalf("expected sid 123, got %#v", additional["sid"])
+		}
+		if additional["sid2"] != "123" {
+			t.Fatalf("expected sid2 123, got %#v", additional["sid2"])
+		}
+		if additional["foo_cookie"] != "bar" {
+			t.Fatalf("expected foo_cookie bar, got %#v", additional["foo_cookie"])
+		}
+		if additional["x_test"] != "abc" {
+			t.Fatalf("expected x_test abc, got %#v", additional["x_test"])
 		}
 		status, ok := additional["status"].(float64)
 		if !ok {

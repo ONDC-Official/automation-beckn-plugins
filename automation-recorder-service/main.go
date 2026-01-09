@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -156,7 +158,8 @@ func loadConfig() (config, error) {
 	cfg.DBTimeout = time.Duration(envInt("RECORDER_DB_TIMEOUT_MS", 5000)) * time.Millisecond
 	cfg.DBEnabledIn = parseEnvSet(os.Getenv("RECORDER_DB_ENABLED_ENVS"))
 	cfg.DBSessionPath = "/api/sessions"
-	cfg.DBPayloadPath = "/api/payloads"
+	// Matches TS: POST `${DATA_BASE_URL}/api/sessions/payload`
+	cfg.DBPayloadPath = "/api/sessions/payload"
 
 	return cfg, nil
 }
@@ -199,6 +202,7 @@ type auditPayload struct {
 type derivedFields struct {
 	PayloadID     string
 	TransactionID string
+	MessageID     string
 	SubscriberURL string
 	Action        string
 	Timestamp     string
@@ -258,6 +262,7 @@ func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue
 	if !s.cfg.SkipCacheUpdate {
 		in := cacheAppendInput{
 			TransactionID: derived.TransactionID,
+			MessageID:     derived.MessageID,
 			SubscriberURL: derived.SubscriberURL,
 			Action:        derived.Action,
 			Timestamp:     derived.Timestamp,
@@ -290,7 +295,7 @@ func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue
 	}
 	if !s.cfg.SkipDBSave {
 		s.async.enqueue(baseCtx, "db-save", func(ctx context.Context) error {
-			return savePayloadToDB(ctx, s.cfg, s.httpClient, derived, payload.RequestBody, payload.ResponseBody)
+			return savePayloadToDB(ctx, s.cfg, s.httpClient, s.rdb, derived, payload.RequestBody, payload.ResponseBody, payload.AdditionalData)
 		})
 	}
 
@@ -361,6 +366,7 @@ func createTransactionKey(transactionID, subscriberURL string) string {
 
 type cacheAppendInput struct {
 	TransactionID string
+	MessageID     string
 	SubscriberURL string
 	Action        string
 	Timestamp     string
@@ -390,6 +396,7 @@ func updateTransactionAtomically(ctx context.Context, rdb *redis.Client, key str
 			}
 
 			txn["transactionId"] = strings.TrimSpace(in.TransactionID)
+			txn["messageId"] = strings.TrimSpace(in.MessageID)
 			txn["subscriberUrl"] = strings.TrimRight(strings.TrimSpace(in.SubscriberURL), "/")
 			txn["latestAction"] = strings.TrimSpace(in.Action)
 			txn["latestTimestamp"] = strings.TrimSpace(in.Timestamp)
@@ -540,6 +547,7 @@ func deriveFields(p auditPayload) (derivedFields, error) {
 
 	out.PayloadID = getString(ad, "payload_id")
 	out.TransactionID = getString(ad, "transaction_id")
+	out.MessageID = getString(ad, "message_id")
 	out.SubscriberURL = getString(ad, "subscriber_url")
 	out.Action = getString(ad, "action")
 	out.Timestamp = getString(ad, "timestamp")
@@ -549,6 +557,12 @@ func deriveFields(p auditPayload) (derivedFields, error) {
 	out.CacheTTLSecs = getInt64(ad, "cache_ttl_seconds")
 	out.IsMock = getBool(ad, "is_mock")
 	out.SessionID = getString(ad, "session_id")
+
+	// Backfill from requestBody.context if not provided in additionalData.
+	ctxObj, _ := p.RequestBody["context"].(map[string]any)
+	if strings.TrimSpace(out.MessageID) == "" && ctxObj != nil {
+		out.MessageID = getString(ctxObj, "message_id")
+	}
 
 	if strings.TrimSpace(out.TransactionID) == "" {
 		return derivedFields{}, fmt.Errorf("transaction_id is required in additionalData")
@@ -606,7 +620,7 @@ func sendLogsToNO(ctx context.Context, cfg config, client *http.Client, d derive
 	return nil
 }
 
-func savePayloadToDB(ctx context.Context, cfg config, client *http.Client, d derivedFields, requestBody, responseBody map[string]any) error {
+func savePayloadToDB(ctx context.Context, cfg config, client *http.Client, rdb *redis.Client, d derivedFields, requestBody, responseBody map[string]any, additionalData map[string]any) error {
 	if strings.TrimSpace(cfg.DBBaseURL) == "" {
 		return nil
 	}
@@ -618,50 +632,162 @@ func savePayloadToDB(ctx context.Context, cfg config, client *http.Client, d der
 	}
 	client.Timeout = cfg.DBTimeout
 
-	// If session_id is provided, do a lightweight check/create similar to TS.
-	if strings.TrimSpace(d.SessionID) != "" {
-		checkURL, err := url.JoinPath(cfg.DBBaseURL, cfg.DBSessionPath, "check", d.SessionID)
+	// Load transaction from Redis; if it doesn't exist, match TS behavior and skip DB save.
+	txn, err := loadTransactionMap(ctx, rdb, createTransactionKey(d.TransactionID, d.SubscriberURL))
+	if err != nil {
+		return err
+	}
+	if txn == nil {
+		return nil
+	}
+
+	sessionId := strings.TrimSpace(getString(txn, "sessionId"))
+	flowId := strings.TrimSpace(getString(txn, "flowId"))
+	npType := strings.TrimSpace(getString(txn, "subscriberType"))
+
+	if sessionId == "" {
+		// Matches TS: key = sha256(transactionKey)
+		sessionId = sha256Hex(createTransactionKey(d.TransactionID, d.SubscriberURL))
+	}
+
+	// Check/Create session in DB
+	checkURL, err := url.JoinPath(cfg.DBBaseURL, cfg.DBSessionPath, "check", sessionId)
+	if err != nil {
+		return err
+	}
+	exists, err := getBoolJSON(ctx, client, checkURL, cfg.DBAPIKey)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		createURL, err := url.JoinPath(cfg.DBBaseURL, cfg.DBSessionPath)
 		if err != nil {
 			return err
 		}
-		status, err := getStatus(ctx, client, checkURL, cfg.DBAPIKey)
-		if err != nil {
-			return err
+		domain := getContextString(requestBody, "domain")
+		version := getContextString(requestBody, "version")
+		if strings.TrimSpace(version) == "" {
+			version = getContextString(requestBody, "core_version")
 		}
-		if status == http.StatusNotFound {
-			createURL, err := url.JoinPath(cfg.DBBaseURL, cfg.DBSessionPath)
-			if err != nil {
-				return err
-			}
-			session := map[string]any{
-				"sessionId":     d.SessionID,
-				"transactionId": d.TransactionID,
-				"subscriberUrl": strings.TrimRight(d.SubscriberURL, "/"),
-				"createdAt":     time.Now().UTC().Format(time.RFC3339Nano),
-			}
-			if err := postJSONWithAPIKey(ctx, client, createURL, cfg.DBAPIKey, session); err != nil {
-				return err
-			}
+		sessionPayload := map[string]any{
+			"sessionId":      sessionId,
+			"npType":         npType,
+			"npId":           strings.TrimSpace(d.SubscriberURL),
+			"domain":         domain,
+			"version":        version,
+			"sessionType":    "AUTOMATION",
+			"sessionActive":  true,
+		}
+		if err := postJSONWithAPIKey(ctx, client, createURL, cfg.DBAPIKey, sessionPayload); err != nil {
+			return err
 		}
 	}
 
+	// Save payload
 	payloadURL, err := url.JoinPath(cfg.DBBaseURL, cfg.DBPayloadPath)
 	if err != nil {
 		return err
 	}
-	payload := map[string]any{
-		"payloadId":     d.PayloadID,
-		"transactionId": d.TransactionID,
-		"subscriberUrl": strings.TrimRight(d.SubscriberURL, "/"),
-		"action":        d.Action,
-		"timestamp":     d.Timestamp,
-		"apiName":       d.APIName,
-		"statusCode":    d.StatusCode,
-		"isMock":        d.IsMock,
-		"request":       requestBody,
-		"response":      responseBody,
+
+	action := strings.ToUpper(strings.TrimSpace(d.Action))
+	messageID := strings.TrimSpace(d.MessageID)
+	if messageID == "" {
+		messageID = getContextString(requestBody, "message_id")
 	}
-	return postJSONWithAPIKey(ctx, client, payloadURL, cfg.DBAPIKey, payload)
+
+	// Allow passing request headers from additionalData (plugin remap can populate this).
+	reqHeader := any(map[string]any{})
+	if additionalData != nil {
+		if v, ok := additionalData["reqHeader"]; ok {
+			reqHeader = v
+		} else if v, ok := additionalData["req_header"]; ok {
+			reqHeader = v
+		} else if v, ok := additionalData["request_headers"]; ok {
+			reqHeader = v
+		}
+	}
+
+	requestPayload := map[string]any{
+		"messageId":     messageID,
+		"transactionId": strings.TrimSpace(d.TransactionID),
+		"payloadId":     strings.TrimSpace(d.PayloadID),
+		"action":        action,
+		"bppId":         getContextString(requestBody, "bpp_id"),
+		"bapId":         getContextString(requestBody, "bap_id"),
+		"reqHeader":     reqHeader,
+		"jsonRequest":   requestBody,
+		"jsonResponse":  map[string]any{"response": responseBody},
+		"httpStatus":    d.StatusCode,
+		"flowId":        flowId,
+		"sessionDetails": map[string]any{
+			"sessionId": sessionId,
+		},
+	}
+
+	return postJSONWithAPIKey(ctx, client, payloadURL, cfg.DBAPIKey, requestPayload)
+}
+
+func loadTransactionMap(ctx context.Context, rdb *redis.Client, key string) (map[string]any, error) {
+	if rdb == nil || strings.TrimSpace(key) == "" {
+		return nil, nil
+	}
+	val, err := rdb.Get(ctx, key).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(val), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+func getContextString(requestBody map[string]any, key string) string {
+	ctxObj, _ := requestBody["context"].(map[string]any)
+	if ctxObj == nil {
+		return ""
+	}
+	return getString(ctxObj, key)
+}
+
+func getBoolJSON(ctx context.Context, client *http.Client, endpoint string, apiKey string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(apiKey) != "" {
+		req.Header.Set("x-api-key", apiKey)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("http %s returned %d: %s", endpoint, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	var v any
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		return false, err
+	}
+	switch t := v.(type) {
+	case bool:
+		return t, nil
+	case map[string]any:
+		if inner, ok := t["data"].(bool); ok {
+			return inner, nil
+		}
+	}
+	return false, nil
 }
 
 func postJSON(ctx context.Context, client *http.Client, endpoint string, bearerToken string, payload any) error {

@@ -42,6 +42,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.38.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
 	google.golang.org/protobuf v1.32.0 // indirect
 )

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -311,5 +313,114 @@ func TestFlowStatusKeyUpdatedOnlyIfExists(t *testing.T) {
 	}
 	if got["status"] != "AVAILABLE" {
 		t.Fatalf("status: %#v", got["status"])
+	}
+}
+
+func TestSavePayloadToDB_MatchesTSDataService(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	// Seed a transaction with flow/session/subscriberType data.
+	// NOTE: sessionId intentionally omitted to force sha256 fallback.
+	key := createTransactionKey("t1", "https://subscriber.example.com")
+	seed := map[string]any{
+		"flowId":         "flow-1",
+		"subscriberType": "BPP",
+	}
+	seedB, _ := json.Marshal(seed)
+	if err := rdb.Set(ctx, key, string(seedB), 0).Err(); err != nil {
+		t.Fatalf("seed set: %v", err)
+	}
+
+	var gotCheckPath string
+	var createdSession map[string]any
+	var savedPayload map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/sessions/check/"):
+			gotCheckPath = r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("false"))
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
+			_ = json.NewDecoder(r.Body).Decode(&createdSession)
+			w.WriteHeader(200)
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions/payload":
+			_ = json.NewDecoder(r.Body).Decode(&savedPayload)
+			w.WriteHeader(200)
+			return
+		default:
+			w.WriteHeader(404)
+			return
+		}
+	}))
+	defer srv.Close()
+
+	cfg := config{
+		Env:         "test",
+		DBBaseURL:    srv.URL,
+		DBAPIKey:     "k",
+		DBTimeout:    2 * time.Second,
+		DBEnabledIn:   map[string]bool{"test": true},
+		DBSessionPath: "/api/sessions",
+		DBPayloadPath: "/api/sessions/payload",
+	}
+
+	requestBody := map[string]any{
+		"context": map[string]any{
+			"transaction_id": "t1",
+			"message_id":     "m1",
+			"action":         "on_search",
+			"domain":         "retail",
+			"version":        "2.0.0",
+			"bpp_id":         "bpp",
+			"bap_id":         "bap",
+		},
+	}
+	responseBody := map[string]any{"ok": true}
+	additionalData := map[string]any{
+		"req_header": map[string]any{"x-test": "abc"},
+	}
+
+	d := derivedFields{
+		PayloadID:     "pid-1",
+		TransactionID: "t1",
+		MessageID:     "m1",
+		SubscriberURL: "https://subscriber.example.com",
+		Action:        "on_search",
+		StatusCode:    201,
+	}
+
+	if err := savePayloadToDB(ctx, cfg, srv.Client(), rdb, d, requestBody, responseBody, additionalData); err != nil {
+		t.Fatalf("savePayloadToDB: %v", err)
+	}
+
+	if gotCheckPath == "" {
+		t.Fatalf("expected session check call")
+	}
+	if createdSession["sessionType"] != "AUTOMATION" {
+		t.Fatalf("sessionType: %#v", createdSession["sessionType"])
+	}
+	if createdSession["npType"] != "BPP" {
+		t.Fatalf("npType: %#v", createdSession["npType"])
+	}
+	if createdSession["npId"] != "https://subscriber.example.com" {
+		t.Fatalf("npId: %#v", createdSession["npId"])
+	}
+
+	if savedPayload["transactionId"] != "t1" {
+		t.Fatalf("transactionId: %#v", savedPayload["transactionId"])
+	}
+	if savedPayload["payloadId"] != "pid-1" {
+		t.Fatalf("payloadId: %#v", savedPayload["payloadId"])
+	}
+	if savedPayload["action"] != "ON_SEARCH" {
+		t.Fatalf("action: %#v", savedPayload["action"])
+	}
+	if savedPayload["httpStatus"].(float64) != 201 {
+		t.Fatalf("httpStatus: %#v", savedPayload["httpStatus"])
 	}
 }
