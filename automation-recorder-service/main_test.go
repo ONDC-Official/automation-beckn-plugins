@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
@@ -252,6 +253,85 @@ func TestGrpcLogEventNotFound(t *testing.T) {
 	}
 }
 
+func TestHTMLFormEndpointAppendsFormEntry(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	key := createTransactionKey("t1", "https://s")
+	seed := map[string]any{
+		"latestAction":    "init",
+		"latestTimestamp": "old",
+		"type":            "",
+		"subscriberType":  "BPP",
+		"messageIds":      []string{},
+		"apiList":         []any{},
+		"referenceData":   map[string]any{},
+	}
+	seedB, _ := json.Marshal(seed)
+	if err := rdb.Set(ctx, key, string(seedB), 0).Err(); err != nil {
+		t.Fatalf("seed set: %v", err)
+	}
+
+	srv := httptest.NewServer(newHTTPMux(rdb))
+	t.Cleanup(srv.Close)
+
+	body := map[string]any{
+		"transaction_id": "t1",
+		"subscriber_url": "https://s",
+		"form_action_id": "form-123",
+		"form_type":      "HTML_FORM",
+		"submissionId":   "sub-1",
+		"error":          map[string]any{"msg": "bad"},
+	}
+	b, _ := json.Marshal(body)
+
+	resp, err := http.Post(srv.URL+"/html-form", "application/json", bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+
+	val, err := rdb.Get(ctx, key).Result()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(val), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["latestAction"] != "init" {
+		t.Fatalf("latestAction changed: %#v", got["latestAction"])
+	}
+
+	apiList, ok := got["apiList"].([]any)
+	if !ok || len(apiList) != 1 {
+		t.Fatalf("apiList: %#v", got["apiList"])
+	}
+	entry, ok := apiList[0].(map[string]any)
+	if !ok {
+		t.Fatalf("apiList[0] not object: %#v", apiList[0])
+	}
+	if entry["entryType"] != "FORM" {
+		t.Fatalf("entryType: %#v", entry["entryType"])
+	}
+	if entry["formId"] != "form-123" {
+		t.Fatalf("formId: %#v", entry["formId"])
+	}
+	if entry["formType"] != "HTML_FORM" {
+		t.Fatalf("formType: %#v", entry["formType"])
+	}
+	if entry["submissionId"] != "sub-1" {
+		t.Fatalf("submissionId: %#v", entry["submissionId"])
+	}
+	if ts, _ := entry["timestamp"].(string); ts == "" || !strings.HasSuffix(ts, "Z") {
+		t.Fatalf("timestamp: %#v", entry["timestamp"])
+	}
+}
+
 func TestGrpcLogEventBadJSON(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -400,10 +480,10 @@ func TestSavePayloadToDB_MatchesTSDataService(t *testing.T) {
 	defer srv.Close()
 
 	cfg := config{
-		Env:         "test",
-		DBBaseURL:    srv.URL,
-		DBAPIKey:     "k",
-		DBTimeout:    2 * time.Second,
+		Env:           "test",
+		DBBaseURL:     srv.URL,
+		DBAPIKey:      "k",
+		DBTimeout:     2 * time.Second,
 		DBEnabledIn:   map[string]bool{"test": true},
 		DBSessionPath: "/api/sessions",
 		DBPayloadPath: "/api/sessions/payload",
