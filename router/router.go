@@ -38,7 +38,7 @@ type routingRule struct {
 	TargetType  string   `yaml:"targetType"` // "url", "publisher", "bpp", or "bap"
 	Target      target   `yaml:"target,omitempty"`
 	Endpoints   []string `yaml:"endpoints"`
-	ActAsProxy  bool     `yaml:"actAsProxy,omitempty"`
+	ActAsProxy  *bool     `yaml:"actAsProxy,omitempty"`
 }
 
 // Target contains destination-specific details.
@@ -91,6 +91,7 @@ func (r *Router) loadRules(configPath string) error {
 		return fmt.Errorf("error parsing YAML: %w", err)
 	}
 
+
 	// Validate rules
 	if err := validateRules(config.RoutingRules); err != nil {
 		return fmt.Errorf("invalid routing rules: %w", err)
@@ -104,6 +105,11 @@ func (r *Router) loadRules(configPath string) error {
 				fmt.Printf("WARNING: Domain field '%s' is not needed for version %s and will be ignored. Consider removing it from your config.\n", domain, rule.Version)
 			}
 			domain = "*"
+		}
+
+		if(rule.ActAsProxy == nil){
+			rule.ActAsProxy = new(bool)
+			*rule.ActAsProxy = true
 		}
 
 		// Initialize domain map if not exists
@@ -287,7 +293,8 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte, request *
 		return &model.Route{
 			TargetType:  targetTypeURL,
 			URL:         targetURL,
-			ActAsProxy:  route.ActAsProxy,},nil
+			ActAsProxy:  route.ActAsProxy,
+		},nil
 	}
 
 	return route, nil

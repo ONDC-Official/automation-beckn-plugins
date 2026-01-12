@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"router"
 
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/router"
 )
 
 // RouterProvider provides instances of Router.
