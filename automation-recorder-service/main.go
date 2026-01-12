@@ -139,7 +139,7 @@ func loadConfig() (config, error) {
 		cfg.Env = "dev"
 	}
 
-	cfg.APITTLSecondsDefault = int64(envInt("RECORDER_API_TTL_SECONDS_DEFAULT", 30))
+	cfg.APITTLSecondsDefault = int64(envInt("RECORDER_API_TTL_SECONDS_DEFAULT", 30000))
 	if cfg.APITTLSecondsDefault < 0 {
 		cfg.APITTLSecondsDefault = 0
 	}
@@ -261,12 +261,12 @@ func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue
 
 	if !s.cfg.SkipCacheUpdate {
 		in := cacheAppendInput{
+			PayloadID:     derived.PayloadID,
 			TransactionID: derived.TransactionID,
 			MessageID:     derived.MessageID,
 			SubscriberURL: derived.SubscriberURL,
 			Action:        derived.Action,
 			Timestamp:     derived.Timestamp,
-			APIName:       derived.APIName,
 			TTLSecs:       derived.TTLSecs,
 			Response:      payload.ResponseBody,
 		}
@@ -338,21 +338,6 @@ var (
 	errAborted  = errors.New("aborted")
 )
 
-type transactionCache struct {
-	TransactionId    *string   `json:"transactionId"`
-	SubscriberUrl    *string   `json:"subscriberUrl"`
-	LatestAction     *string   `json:"latestAction"`
-	LatestTimestamp  *string   `json:"latestTimestamp"`
-	ApiList          []apiData `json:"apiList"`
-}
-
-type apiData struct {
-	ApiName   *string `json:"apiName"`
-	Response  any     `json:"response"`
-	Ttl       *int64  `json:"ttl"`
-	Timestamp *string `json:"timestamp"`
-}
-
 func createTransactionKey(transactionID, subscriberURL string) string {
 	transactionID = strings.TrimSpace(transactionID)
 	subscriberURL = strings.TrimSpace(subscriberURL)
@@ -365,12 +350,12 @@ func createTransactionKey(transactionID, subscriberURL string) string {
 
 
 type cacheAppendInput struct {
+	PayloadID     string
 	TransactionID string
 	MessageID     string
 	SubscriberURL string
 	Action        string
 	Timestamp     string
-	APIName       string
 	TTLSecs       int64
 	Response      any
 }
@@ -395,22 +380,62 @@ func updateTransactionAtomically(ctx context.Context, rdb *redis.Client, key str
 				txn = map[string]any{}
 			}
 
-			txn["transactionId"] = strings.TrimSpace(in.TransactionID)
-			txn["messageId"] = strings.TrimSpace(in.MessageID)
-			txn["subscriberUrl"] = strings.TrimRight(strings.TrimSpace(in.SubscriberURL), "/")
+			// IMPORTANT: Keep cache JSON compatible with the shared TS/Go cache types.
+			// Key is: transactionId::subscriberUrl
+			// Value is a TransactionCache containing apiList entries shaped like ApiData.
 			txn["latestAction"] = strings.TrimSpace(in.Action)
 			txn["latestTimestamp"] = strings.TrimSpace(in.Timestamp)
+
+			// Maintain messageIds (used for duplicate message_id checks).
+			messageID := strings.TrimSpace(in.MessageID)
+			if messageID != "" {
+				var msgIDs []string
+				switch v := txn["messageIds"].(type) {
+				case []any:
+					for _, it := range v {
+						if s, ok := it.(string); ok {
+							msgIDs = append(msgIDs, s)
+						}
+					}
+				case []string:
+					msgIDs = append(msgIDs, v...)
+				}
+				seen := false
+				for _, s := range msgIDs {
+					if s == messageID {
+						seen = true
+						break
+					}
+				}
+				if !seen {
+					msgIDs = append(msgIDs, messageID)
+				}
+				// Store back as JSON array of strings.
+				out := make([]any, 0, len(msgIDs))
+				for _, s := range msgIDs {
+					out = append(out, s)
+				}
+				txn["messageIds"] = out
+			}
 
 			apiList, ok := txn["apiList"].([]any)
 			if !ok || apiList == nil {
 				apiList = []any{}
 			}
-			apiList = append(apiList, map[string]any{
-				"apiName":    strings.TrimSpace(in.APIName),
-				"response":   in.Response,
-				"ttl":        in.TTLSecs,
-				"timestamp":  strings.TrimSpace(in.Timestamp),
-			})
+
+			apiEntry := map[string]any{
+				"entryType":     "API",
+				"action":        strings.TrimSpace(in.Action),
+				"payloadId":     strings.TrimSpace(in.PayloadID),
+				"messageId":     messageID,
+				"response":      in.Response,
+				"timestamp":     strings.TrimSpace(in.Timestamp),
+				"realTimestamp": time.Now().UTC().Format(time.RFC3339Nano),
+			}
+			if in.TTLSecs > 0 {
+				apiEntry["ttl"] = in.TTLSecs
+			}
+			apiList = append(apiList, apiEntry)
 			txn["apiList"] = apiList
 
 			updated, err := json.Marshal(txn)

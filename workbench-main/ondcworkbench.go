@@ -17,7 +17,7 @@ import (
 )
 
 type Config struct {
-	AuditURL 	 string
+	RegistryURL	 string
 	ProtocolVersion   string
 	ProtocolDomain   string
 	ModuleRole string // BAP or BPP
@@ -138,7 +138,6 @@ func (w *ondcWorkbench) WorkbenchValidateContext(ctx context.Context,request *ht
 		log.Errorf(ctx, err, "context validation failed")
 		return err
 	}
-	// cleanUpHttpRequest(request)
 	return nil
 }
 

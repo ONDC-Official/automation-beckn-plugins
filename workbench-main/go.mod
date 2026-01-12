@@ -8,7 +8,11 @@ replace github.com/beckn-one/beckn-onix => /Users/rudranshsinghal/ondc/automatio
 
 replace validationpkg => ./validationpkg
 
-require github.com/beckn-one/beckn-onix v0.0.0-00010101000000-000000000000
+require (
+	github.com/beckn-one/beckn-onix v0.0.0-00010101000000-000000000000
+	github.com/rickb777/date v1.22.0
+	golang.org/x/crypto v0.36.0
+)
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -23,6 +27,7 @@ require (
 	github.com/prometheus/client_model v0.6.0 // indirect
 	github.com/prometheus/common v0.45.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
+	github.com/rickb777/plural v1.4.7 // indirect
 	github.com/rs/zerolog v1.34.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel v1.38.0 // indirect

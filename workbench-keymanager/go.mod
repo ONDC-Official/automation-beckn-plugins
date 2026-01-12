@@ -9,6 +9,7 @@ replace github.com/beckn-one/beckn-onix => /Users/rudranshsinghal/ondc/automatio
 replace validationpkg => ./validationpkg
 
 require (
+	github.com/ONDC-Official/ondc-crypto-sdk-go v0.2.0
 	github.com/beckn-one/beckn-onix v0.0.0-00010101000000-000000000000
 	github.com/spf13/viper v1.21.0
 )
@@ -41,6 +42,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.38.0 // indirect
 	go.opentelemetry.io/otel/trace v1.38.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/crypto v0.36.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
 	google.golang.org/protobuf v1.32.0 // indirect

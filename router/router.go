@@ -36,6 +36,8 @@ type routingRule struct {
 	TargetType string   `yaml:"targetType"` // "url", "publisher", "bpp", or "bap"
 	Target     target   `yaml:"target,omitempty"`
 	Endpoints  []string `yaml:"endpoints"`
+	RouteOnNACK bool     `yaml:"routeOnNACK,omitempty"`
+	ActAsProxy  bool     `yaml:"actAsProxy,omitempty"`
 }
 
 // Target contains destination-specific details.
@@ -51,6 +53,7 @@ const (
 	targetTypePublisher = "publisher" // Route to a publisher
 	targetTypeBPP       = "bpp"       // Route to a BPP endpoint
 	targetTypeBAP       = "bap"       // Route to a BAP endpoint
+	targetTypeWorkbenchMock = "workbench-mock" // Route to workbench mock service
 )
 
 // New initializes a new Router instance with the provided configuration.
@@ -146,6 +149,7 @@ func (r *Router) loadRules(configPath string) error {
 					URL:        parsedURL,
 				}
 			}
+			
 			// Check for conflicting v2 rules
 			if isV2Version(rule.Version) {
 				if _, exists := r.rules[domain][rule.Version][endpoint]; exists {
@@ -268,6 +272,8 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.R
 		return &model.Route{
 			TargetType: targetTypeURL,
 			URL:        route.URL,
+			ActAsProxy: route.ActAsProxy,
+			RouteOnNACK: route.RouteOnNACK,
 		}, nil
 	}
 	targetURL, err := url.Parse(target)
@@ -278,6 +284,8 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.R
 	return &model.Route{
 		TargetType: targetTypeURL,
 		URL:        targetURL,
+		ActAsProxy: route.ActAsProxy,
+		RouteOnNACK: route.RouteOnNACK,
 	}, nil
 }
 

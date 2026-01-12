@@ -15,7 +15,6 @@ func (w *workbenchProvider) New(ctx context.Context,cache definition.Cache,confi
 	if(cache == nil){
 		return nil,nil, fmt.Errorf("cache instance cannot be nil")
 	}	
-	auditURL := config["auditURL"]
 	protocolVersion := config["protocolVersion"]
 	protocolDomain := config["protocolDomain"]
 	ModuleRole := config["moduleRole"]
@@ -37,7 +36,6 @@ func (w *workbenchProvider) New(ctx context.Context,cache definition.Cache,confi
 	}
 
 	return ondcworkbench.New(ctx,cache,&ondcworkbench.Config{
-		AuditURL: auditURL,
 		ProtocolVersion: protocolVersion,
 		ProtocolDomain: protocolDomain,
 		ModuleRole: ModuleRole,

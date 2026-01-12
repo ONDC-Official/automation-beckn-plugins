@@ -33,11 +33,12 @@ func TestUpdateTransactionAtomicallyNotFound(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 
 	req := &cacheAppendInput{
+		PayloadID:     "pid-1",
 		TransactionID: "t1",
+		MessageID:     "m1",
 		SubscriberURL: "https://s",
 		Action:        "on_search",
 		Timestamp:     "2026-01-07T00:00:00Z",
-		APIName:       "search",
 		TTLSecs:       30,
 		Response:      map[string]any{"ok": true},
 	}
@@ -58,11 +59,13 @@ func TestUpdateTransactionAtomicallyAppendsApi(t *testing.T) {
 	key := createTransactionKey("t1", "https://s/")
 
 	seed := map[string]any{
-		"transactionId":   "t1",
-		"subscriberUrl":   "https://s",
 		"latestAction":    "init",
 		"latestTimestamp": "old",
+		"type":            "",
+		"subscriberType":  "BPP",
+		"messageIds":      []string{},
 		"apiList":         []any{},
+		"referenceData":   map[string]any{},
 	}
 	seedB, _ := json.Marshal(seed)
 	if err := rdb.Set(context.Background(), key, string(seedB), 0).Err(); err != nil {
@@ -70,11 +73,12 @@ func TestUpdateTransactionAtomicallyAppendsApi(t *testing.T) {
 	}
 
 	req := &cacheAppendInput{
+		PayloadID:     "pid-1",
 		TransactionID: "t1",
 		SubscriberURL: "https://s/",
+		MessageID:     "m1",
 		Action:        "on_search",
 		Timestamp:     "2026-01-07T00:00:00Z",
-		APIName:       "search",
 		TTLSecs:       30,
 		Response:      map[string]any{"ok": true},
 	}
@@ -101,6 +105,35 @@ func TestUpdateTransactionAtomicallyAppendsApi(t *testing.T) {
 	if !ok || len(apiList) != 1 {
 		t.Fatalf("apiList: %#v", got["apiList"])
 	}
+	entry, ok := apiList[0].(map[string]any)
+	if !ok {
+		t.Fatalf("apiList[0] not object: %#v", apiList[0])
+	}
+	if entry["entryType"] != "API" {
+		t.Fatalf("entryType: %#v", entry["entryType"])
+	}
+	if entry["action"] != "on_search" {
+		t.Fatalf("action: %#v", entry["action"])
+	}
+	if entry["payloadId"] != "pid-1" {
+		t.Fatalf("payloadId: %#v", entry["payloadId"])
+	}
+	if entry["messageId"] != "m1" {
+		t.Fatalf("messageId: %#v", entry["messageId"])
+	}
+	if entry["timestamp"] != "2026-01-07T00:00:00Z" {
+		t.Fatalf("timestamp: %#v", entry["timestamp"])
+	}
+	if rt, _ := entry["realTimestamp"].(string); rt == "" {
+		t.Fatalf("realTimestamp: %#v", entry["realTimestamp"])
+	}
+	if entry["ttl"].(float64) != 30 {
+		t.Fatalf("ttl: %#v", entry["ttl"])
+	}
+	msgIDs, ok := got["messageIds"].([]any)
+	if !ok || len(msgIDs) != 1 || msgIDs[0] != "m1" {
+		t.Fatalf("messageIds: %#v", got["messageIds"])
+	}
 }
 
 func TestGrpcLogEventHappyPath(t *testing.T) {
@@ -111,11 +144,13 @@ func TestGrpcLogEventHappyPath(t *testing.T) {
 
 	key := createTransactionKey("t1", "https://s")
 	seed := map[string]any{
-		"transactionId":   "t1",
-		"subscriberUrl":   "https://s",
 		"latestAction":    "init",
 		"latestTimestamp": "old",
+		"type":            "",
+		"subscriberType":  "BPP",
+		"messageIds":      []string{},
 		"apiList":         []any{},
+		"referenceData":   map[string]any{},
 	}
 	seedB, _ := json.Marshal(seed)
 	if err := rdb.Set(ctx, key, string(seedB), 0).Err(); err != nil {
@@ -255,9 +290,13 @@ func TestCacheTTLApplied(t *testing.T) {
 
 	key := createTransactionKey("t1", "https://s")
 	seed := map[string]any{
-		"transactionId": "t1",
-		"subscriberUrl": "https://s",
-		"apiList":       []any{},
+		"latestAction":    "init",
+		"latestTimestamp": "old",
+		"type":            "",
+		"subscriberType":  "BPP",
+		"messageIds":      []string{},
+		"apiList":         []any{},
+		"referenceData":   map[string]any{},
 	}
 	seedB, _ := json.Marshal(seed)
 	if err := rdb.Set(ctx, key, string(seedB), 0).Err(); err != nil {
@@ -265,11 +304,12 @@ func TestCacheTTLApplied(t *testing.T) {
 	}
 
 	req := &cacheAppendInput{
+		PayloadID:     "pid-1",
 		TransactionID: "t1",
 		SubscriberURL: "https://s",
+		MessageID:     "m1",
 		Action:        "on_search",
 		Timestamp:     "2026-01-07T00:00:00Z",
-		APIName:       "search",
 		TTLSecs:       30,
 		Response:      map[string]any{"ok": true},
 	}

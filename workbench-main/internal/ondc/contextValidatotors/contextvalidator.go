@@ -84,7 +84,7 @@ type contextValidationResult struct {
 }
 
 func (cv *Validator) validateAsyncContext(ctx context.Context, payload apiservice.PayloadEnvelope, transactionData *cache.TransactionCache, requestOwner string) contextValidationResult {
-	log.Infof(ctx, "Validating Transaction History")
+	log.Infof(ctx, "Validating Transaction History for action: %s", payload.Context.Action)
 
 	apiEntries := apiDataFromTransaction(transactionData)
 	sortedContexts := sortApiDataByTimestampDesc(apiEntries)
@@ -110,6 +110,7 @@ func (cv *Validator) validateAsyncContext(ctx context.Context, payload apiservic
 func (cv *Validator) validateAsyncPath(ctx context.Context, payload apiservice.PayloadEnvelope, sortedContexts []cache.ApiData, predecessorName string) contextValidationResult {
 	subjectAction := payload.Context.Action
 	predecessor := findFirstAction(sortedContexts, predecessorName)
+	log.Infof(ctx, "Validating Async Path: %s -> %s", predecessorName, subjectAction)
 	if predecessor == nil {
 		msg := fmt.Sprintf("%s for %s not found in the flow history", predecessorName, subjectAction)
 		log.Warnf(ctx, "%s", msg)
@@ -145,12 +146,7 @@ func (cv *Validator) validateAsyncPath(ctx context.Context, payload apiservice.P
 
 func (cv *Validator) validateSyncPath(ctx context.Context, payload apiservice.PayloadEnvelope, transactionData *cache.TransactionCache) contextValidationResult {
 	subjectAction := payload.Context.Action
-	if containsString(transactionData.MessageIds, payload.Context.MessageID) {
-		msg := "Duplicate message_id found in the flow history"
-		log.Warnf(ctx, "%s", msg)
-		return contextValidationResult{Valid: false, Error: msg, ForwardRequest: false}
-	}
-
+	
 	supported := cv.getSupportedActions(transactionData.LatestAction)
 	if !containsString(supported, subjectAction) {
 		msg := fmt.Sprintf("%s not supported after %s", subjectAction, transactionData.LatestAction)
@@ -192,7 +188,7 @@ func (cv *Validator) validateTransactionId(ctx context.Context, action string, s
 
 func (cv *Validator) getAsyncPredecessor(action string) string {
 	props, ok := cv.properties.APIProperties[action]
-	if !ok || props.AsyncPredecessor == nil {
+	if !ok || props.AsyncPredecessor == nil{
 		return ""
 	}
 	return strings.TrimSpace(*props.AsyncPredecessor)

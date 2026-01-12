@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
+	"github.com/rickb777/date/period"
 )
 
 
@@ -69,7 +70,31 @@ func setRequestCookies(requestData *apiservice.WorkbenchRequestData) error {
 		Name: "request_owner",
 		Value: string(requestData.RequestOwner),
 	})
+
+	secs, _ := ISO8601ToSecondsStrict(requestData.BodyEnvelope.Context.TTL)
+	httpReq.AddCookie(&http.Cookie{
+		Name: "ttl_seconds",
+		Value: fmt.Sprintf("%d", secs),
+	})
 	return nil
+}
+
+func ISO8601ToSecondsStrict(s string) (int64, error) {
+	p, err := period.Parse(s, true)
+	if err != nil {
+		return 0, nil
+	}
+
+	if p.Years() != 0 || p.Months() != 0 {
+		return 0, nil
+	}
+
+	d := time.Duration(p.Days())*24*time.Hour +
+		time.Duration(p.Hours())*time.Hour +
+		time.Duration(p.Minutes())*time.Minute +
+		time.Duration(p.Seconds())*time.Second
+
+	return int64(d.Seconds()), nil
 }
 
 func getBooleanString(value bool) string {
