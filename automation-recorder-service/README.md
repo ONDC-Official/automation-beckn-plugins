@@ -13,6 +13,7 @@ This mirrors the behavior that previously lived in the TypeScript API service ro
 Environment variables:
 
 - `RECORDER_LISTEN_ADDR` (default `:8089`)
+- `RECORDER_HTTP_LISTEN_ADDR` (default `:8090`)
 - `REDIS_ADDR` (default `127.0.0.1:6379`)
 - `REDIS_PASSWORD` (optional)
 
@@ -91,6 +92,41 @@ Notes:
 - Redis key format: `transaction_id + "::" + subscriber_url` after trimming spaces and trimming a trailing `/`.
 - `cache_ttl_seconds` controls Redis key expiry. `0` means no expiry.
 
+## HTTP API
+
+This service also exposes a small HTTP endpoint used by the form workflow.
+
+- Listen address: `RECORDER_HTTP_LISTEN_ADDR` (default `:8090`)
+
+### POST `/html-form`
+
+This mirrors the TypeScript API service route `POST /html-form` and only appends a `FORM` entry into the existing transaction cache in Redis.
+
+Request body JSON:
+
+```json
+{
+	"transaction_id": "t1",
+	"subscriber_url": "https://buyer.example.com",
+	"form_action_id": "form-123",
+	"form_type": "HTML_FORM",
+	"submissionId": "optional",
+	"error": { "optional": true }
+}
+```
+
+Notes:
+
+- `transaction_id`, `subscriber_url`, `form_action_id` are required and must be strings.
+- `submissionId` is optional (camelCase, matching the TS controller). `submission_id` is also accepted.
+- The transaction must already exist in Redis (same key format as gRPC).
+
+Responses:
+
+- `200`: `Form submitted successfully`
+- `400`: Invalid/missing fields
+- `500`: Cache update failed
+
 ## Run
 
 From this folder:
@@ -101,3 +137,7 @@ From this folder:
 To point at Redis:
 
 - `REDIS_ADDR=127.0.0.1:6379 RECORDER_LISTEN_ADDR=:8089 go run .`
+
+To enable the HTTP form endpoint on a custom port:
+
+- `REDIS_ADDR=127.0.0.1:6379 RECORDER_LISTEN_ADDR=:8089 RECORDER_HTTP_LISTEN_ADDR=:8090 go run .`
