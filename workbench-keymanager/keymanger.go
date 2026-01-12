@@ -8,9 +8,9 @@ import (
 	"io"
 	"net/http"
 
+	ondccrypto "github.com/ONDC-Official/ondc-crypto-sdk-go"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	ondccrypto "github.com/ONDC-Official/ondc-crypto-sdk-go"
 	"github.com/spf13/viper"
 )
 
@@ -133,7 +133,7 @@ func (k *KeyMgr) LookupNPKeys(ctx context.Context, subscriberID string, uniqueKe
 }
 
 func (k *KeyMgr) createAuthorizationHeader(body string) (string, error) {
-	authHeader, err := ondccrypto.CreateAuthorizationHeader(&ondccrypto.CreateAuthHeaderRequest{
+	authHeader, err := ondccrypto.CreateAuthorizationHeader(ondccrypto.CreateAuthorizationHeaderParams{
 		Body:                  body,
 		PrivateKey:            k.env.SigningPrivate,
 		SubscriberID:          k.env.SubscriberID,
