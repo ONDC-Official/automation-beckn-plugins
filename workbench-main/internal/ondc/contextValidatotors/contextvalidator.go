@@ -72,9 +72,22 @@ func (cv *Validator) ValidateContext(ctx context.Context, httpRequest *http.Requ
 	if result.ForwardRequest {
 		// Mirror TS behavior: invalid but allowed to proceed (forwardRequest=true).
 		log.Warnf(ctx, "Context validation warning (forward_request=true): %s", result.Error)
+		nack := getNackErrorPayload(result.Error)
+		nackBytes, _ := json.Marshal(nack)
+		httpRequest.AddCookie(&http.Cookie{Name: "custom-response-body", Value: string(nackBytes)})
 		return nil
 	}
 	return payloadutils.NewBadRequestNackError(result.Error, payloadRaw["context"])
+}
+
+
+func getNackErrorPayload(message string) map[string]any {
+	return map[string]any{
+		"error": map[string]any{
+			"type":    "NACK",
+			"message": message,
+		},
+	}
 }
 
 type contextValidationResult struct {
