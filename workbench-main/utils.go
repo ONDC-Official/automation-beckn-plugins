@@ -55,6 +55,10 @@ func setRequestCookies(requestData *apiservice.WorkbenchRequestData) error {
 		Value: requestData.SubscriberURL,
 	})
 	httpReq.AddCookie(&http.Cookie{
+		Name: "usecase_id",
+		Value: requestData.UsecaseID,
+	})
+	httpReq.AddCookie(&http.Cookie{
 		Name: "header_validation",
 		Value: getBooleanString(requestData.Difficulty.HeaderValidaton),
 	})

@@ -1,8 +1,13 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"embed"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -478,7 +483,7 @@ func TestRouteSuccess(t *testing.T) {
 			defer os.RemoveAll(filepath.Dir(rulesFilePath))
 
 			parsedURL, _ := url.Parse(tt.url)
-			_, err := router.Route(ctx, parsedURL, []byte(tt.body))
+			_, err := router.Route(ctx, parsedURL, []byte(tt.body), nil)
 
 			// Ensure no error occurred
 			if err != nil {
@@ -543,7 +548,7 @@ func TestRouteFailure(t *testing.T) {
 			defer os.RemoveAll(filepath.Dir(rulesFilePath))
 
 			parsedURL, _ := url.Parse(tt.url)
-			_, err := router.Route(ctx, parsedURL, []byte(tt.body))
+			_, err := router.Route(ctx, parsedURL, []byte(tt.body), nil)
 
 			// Check for expected error
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
@@ -719,7 +724,7 @@ func TestV2RouteSuccess(t *testing.T) {
 			defer os.RemoveAll(filepath.Dir(rulesFilePath))
 
 			parsedURL, _ := url.Parse(tt.url)
-			_, err := router.Route(ctx, parsedURL, []byte(tt.body))
+			_, err := router.Route(ctx, parsedURL, []byte(tt.body), nil)
 
 			if err != nil {
 				t.Errorf("router.Route() = %v, want nil (domain should be ignored for v2)", err)
@@ -789,5 +794,78 @@ func TestV1DomainRequired(t *testing.T) {
 	expectedErr := "invalid rule: domain is required for version 1.0.0"
 	if err != nil && !strings.Contains(err.Error(), expectedErr) {
 		t.Errorf("loadRules() error = %v, want error containing %q", err, expectedErr)
+	}
+}
+
+func TestHttpRequestPaths(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "http://example.com/test?q=1&q=2", bytes.NewBufferString(`{"a":1}`))
+	r.Header.Set("X-Test", "abc")
+	r.AddCookie(&http.Cookie{Name: "sid", Value: "123"})
+
+	{
+		got, err := GetValueFromRequest(r, "$.headers.x-test")
+		fmt.Printf("got is %#+v\n", got)
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if got != "abc" {
+			t.Fatalf("headers.x-test: %#v", got)
+		}
+	}
+	{
+		got, err := GetValueFromRequest(r, "$.cookies.sid")
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if got != "123" {
+			t.Fatalf("cookies.sid: %#v", got)
+		}
+	}
+	{
+		got, err := GetValueFromRequest(r, "$.query.q")
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if got != "1" {
+			t.Fatalf("query.q (first): %#v", got)
+		}
+	}
+	{
+		got, err := GetValueFromRequest(r, "$.query_all.q")
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		vals, ok := got.([]string)
+		if !ok || len(vals) != 2 || vals[0] != "1" || vals[1] != "2" {
+			t.Fatalf("query_all.q: %#v", got)
+		}
+	}
+	{
+		got, err := GetValueFromRequest(r, "$.body.a")
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		// JSON numbers decode to float64 by encoding/json.
+		if got != float64(1) {
+			t.Fatalf("body.a: %#v", got)
+		}
+	}
+	{
+		got, err := GetValueFromRequest(r, "$.does_not_exist")
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if got != nil {
+			t.Fatalf("expected nil for missing path, got %#v", got)
+		}
+	}
+
+	// Ensure body is still readable (CaptureRequestBody restores it).
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatalf("read restored body: %v", err)
+	}
+	if string(b) != `{"a":1}` {
+		t.Fatalf("restored body: %q", string(b))
 	}
 }

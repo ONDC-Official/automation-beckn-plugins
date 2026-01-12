@@ -18,37 +18,37 @@ import (
 // Teams can rebuild the plugin for their own .proto by calling SetGRPCContract
 // from an init() function in an additional file compiled into the same package.
 type grpcContract interface {
-    FullMethod(configured string) string
-    NewRequest() proto.Message
-    NewResponse() proto.Message
-    FillRequest(req proto.Message, body []byte) error
+	FullMethod(configured string) string
+	NewRequest() proto.Message
+	NewResponse() proto.Message
+	FillRequest(req proto.Message, body []byte) error
 }
 
 type defaultGRPCContract struct{}
 
 func (defaultGRPCContract) FullMethod(configured string) string {
-    fullMethod := strings.TrimSpace(configured)
-    if fullMethod == "" {
-        fullMethod = "/beckn.audit.v1.AuditService/LogEvent"
-    }
-    return fullMethod
+	fullMethod := strings.TrimSpace(configured)
+	if fullMethod == "" {
+		fullMethod = "/beckn.audit.v1.AuditService/LogEvent"
+	}
+	return fullMethod
 }
 
 func (defaultGRPCContract) NewRequest() proto.Message {
-    return &wrapperspb.BytesValue{}
+	return &wrapperspb.BytesValue{}
 }
 
 func (defaultGRPCContract) NewResponse() proto.Message {
-    return &emptypb.Empty{}
+	return &emptypb.Empty{}
 }
 
 func (defaultGRPCContract) FillRequest(req proto.Message, body []byte) error {
-    b, ok := req.(*wrapperspb.BytesValue)
-    if !ok {
-        return fmt.Errorf("network-observability: default grpc contract expected *wrapperspb.BytesValue, got %T", req)
-    }
-    b.Value = body
-    return nil
+	b, ok := req.(*wrapperspb.BytesValue)
+	if !ok {
+		return fmt.Errorf("network-observability: default grpc contract expected *wrapperspb.BytesValue, got %T", req)
+	}
+	b.Value = body
+	return nil
 }
 
 var activeGRPCContract grpcContract = defaultGRPCContract{}
@@ -61,9 +61,9 @@ var activeGRPCContract grpcContract = defaultGRPCContract{}
 // Call this from an init() function in another file that is compiled into the
 // same package.
 func SetGRPCContract(c grpcContract) {
-    if c == nil {
-        activeGRPCContract = defaultGRPCContract{}
-        return
-    }
-    activeGRPCContract = c
+	if c == nil {
+		activeGRPCContract = defaultGRPCContract{}
+		return
+	}
+	activeGRPCContract = c
 }

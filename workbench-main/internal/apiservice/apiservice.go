@@ -65,6 +65,7 @@ type WorkbenchRequestData struct {
 	Difficulty cache.SessionDifficulty
 	FlowID string
 	SessionID string
+	UsecaseID string
 }
 // TransactionProperties represents the `x-transaction-properties` configuration.
 //

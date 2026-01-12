@@ -8,6 +8,19 @@ This plugin provides an `http.Handler` middleware that:
 - Applies a configurable remap using JSONPath (same library/dialect used in validator).
 - Sends the payload to a configured destination (HTTP or gRPC) either synchronously or asynchronously.
 
+## Reusable remap package
+
+The JSONPath remap + request parsing helpers are also available as a standalone Go module:
+
+- `github.com/beckn-one/beckn-onix/httprequestremap`
+
+For local development in this repo, use a `replace` like:
+
+```go
+require github.com/beckn-one/beckn-onix/httprequestremap v0.0.0
+replace github.com/beckn-one/beckn-onix/httprequestremap => ../httprequestremap
+```
+
 ## Configuration (YAML)
 
 This plugin loads its configuration from a YAML file.

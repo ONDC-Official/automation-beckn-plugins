@@ -56,6 +56,7 @@ func (r *WorkbenchRequestReceiver) ReceiveFromNP(ctx context.Context, requestDat
 			return payloadutils.NewInternalServerNackError(sessionErr.Error(), requestData.BodyRaw["context"])
 		}
 		requestData.Difficulty = sessionData.SessionDifficulty
+		requestData.UsecaseID = sessionData.UsecaseId
 		return nil
 	}
 	return payloadutils.NewPreconditionFailedHTTPError(
@@ -92,6 +93,7 @@ func (r *WorkbenchRequestReceiver) ReceiveFromMock(ctx context.Context, requestD
 		)
 	}
 	requestData.Difficulty = sessionData.SessionDifficulty
+	requestData.UsecaseID = sessionData.UsecaseId
 	return nil
 }
 
@@ -147,10 +149,12 @@ func (r *WorkbenchRequestReceiver) handleTransactionWhichExits(
 			return payloadutils.NewInternalServerNackError(sessionErr.Error(), requestData.BodyRaw["context"])
 		}
 		difficulty = sessionData.SessionDifficulty
+		requestData.UsecaseID = sessionData.UsecaseId
 	}
 	requestData.Difficulty = difficulty
 	requestData.FlowID = transactionData.FlowId
 	requestData.SessionID = transactionData.SessionId
+
 	return nil
 }
 

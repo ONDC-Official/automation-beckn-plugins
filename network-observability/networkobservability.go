@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,10 +18,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
-	"github.com/AsaiYusuke/jsonpath"
 	"github.com/beckn-one/beckn-onix/pkg/log"
+	httprequestremap "github.com/extedcouD/HttpRequestRemapper"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -319,23 +317,7 @@ func parseConfigFile(configPath string) (Config, error) {
 }
 
 func captureRequestBody(r *http.Request, maxBytes int64) (bool, []byte, bool) {
-	if r.Body == nil {
-		return false, nil, false
-	}
-	if maxBytes == 0 {
-		return true, nil, true
-	}
-	limited := io.LimitReader(r.Body, maxBytes+1)
-	b, err := io.ReadAll(limited)
-	if err != nil {
-		return true, nil, false
-	}
-	truncated := int64(len(b)) > maxBytes
-	if truncated {
-		b = b[:maxBytes]
-	}
-	r.Body = io.NopCloser(bytes.NewReader(b))
-	return true, b, truncated
+	return httprequestremap.CaptureRequestBody(r, maxBytes)
 }
 
 type captureResponseWriter struct {
@@ -410,18 +392,10 @@ func (w *captureResponseWriter) Push(target string, opts *http.PushOptions) erro
 	return p.Push(target, opts)
 }
 
-
 func parseJSONObjectOrEmpty(b []byte) map[string]any {
-	v, ok := tryParseJSON(b)
-	if !ok {
-		return map[string]any{}
-	}
-	m, ok := v.(map[string]any)
-	if !ok || m == nil {
-		return map[string]any{}
-	}
-	return m
+	return httprequestremap.ParseJSONObjectOrEmpty(b)
 }
+
 type auditDispatcher struct {
 	sender          auditSender
 	ch              chan auditJob
@@ -435,7 +409,6 @@ type auditJob struct {
 	ctx  context.Context
 	body []byte
 }
-
 
 type auditSender interface {
 	Send(ctx context.Context, body []byte) error
@@ -574,167 +547,20 @@ func setAuthorizationIfMissing(headers map[string]string, value string) {
 	headers["Authorization"] = value
 }
 
-func buildRemapInput(r *http.Request, reqBody []byte, reqTruncated bool, crw *captureResponseWriter, resBody []byte, resTruncated bool, requestUUID string, durationMs int64) map[string]any {
-	urlStr := ""
-	if r.URL != nil {
-		urlStr = r.URL.String()
-	}
-
-	reqHeaders, reqHeadersAll := headerMaps(r.Header)
-	resHeaders, resHeadersAll := headerMaps(crw.Header())
-
-	query, queryAll := queryMaps(r.URL)
-	cookies := cookieMap(r)
-
-	reqBodyObj, reqBodyIsJSON := tryParseJSON(reqBody)
-	resBodyObj, resBodyIsJSON := tryParseJSON(resBody)
-
-	remapInput := map[string]any{
-		"req": map[string]any{
-			"method":      r.Method,
-			"host":        r.Host,
-			"path":        r.URL.Path,
-			"url":         urlStr,
-			"headers":     reqHeaders,
-			"headersAll":  reqHeadersAll,
-			"query":       query,
-			"queryAll":    queryAll,
-			"cookies":     cookies,
-			"body":        reqBodyObj,
-			"bodyIsJSON":  reqBodyIsJSON,
-			"bodyRaw":     bytesToStringOrBase64(reqBody),
-			"truncated":   reqTruncated,
-			"remote_addr": r.RemoteAddr,
-		},
-		"res": map[string]any{
-			"status":     crw.StatusCode(),
-			"headers":    resHeaders,
-			"headersAll": resHeadersAll,
-			"body":       resBodyObj,
-			"bodyIsJSON": resBodyIsJSON,
-			"bodyRaw":    bytesToStringOrBase64(resBody),
-			"truncated":  resTruncated,
-		},
-		"ctx": map[string]any{
-			"ts": time.Now().UTC().Format(time.RFC3339Nano),
-			"gen": map[string]any{
-				"uuid": requestUUID,
-			},
-			"duration_ms": durationMs,
-		},
-	}
-
-	return remapInput
-}
-
 func headerMaps(h http.Header) (map[string]any, map[string]any) {
-	first := map[string]any{}
-	all := map[string]any{}
-	for k, vs := range h {
-		lk := strings.ToLower(k)
-		if len(vs) == 0 {
-			continue
-		}
-		all[lk] = append([]string(nil), vs...)
-		first[lk] = vs[0]
-	}
-	return first, all
-}
-
-func queryMaps(u *url.URL) (map[string]any, map[string]any) {
-	first := map[string]any{}
-	all := map[string]any{}
-	if u == nil {
-		return first, all
-	}
-	q := u.Query()
-	for k, vs := range q {
-		if len(vs) == 0 {
-			continue
-		}
-		all[k] = append([]string(nil), vs...)
-		first[k] = vs[0]
-	}
-	return first, all
+	return httprequestremap.HeaderMaps(h)
 }
 
 func cookieMap(r *http.Request) map[string]any {
-	res := map[string]any{}
-	for _, c := range r.Cookies() {
-		res[c.Name] = c.Value
-	}
-	return res
-}
-
-func tryParseJSON(b []byte) (any, bool) {
-	if len(bytes.TrimSpace(b)) == 0 {
-		return nil, false
-	}
-	var v any
-	if err := json.Unmarshal(b, &v); err != nil {
-		return nil, false
-	}
-	return v, true
-}
-
-func bytesToStringOrBase64(b []byte) any {
-	if b == nil {
-		return nil
-	}
-	// If it's valid UTF-8, return string; otherwise return base64.
-	if utf8.Valid(b) {
-		return string(b)
-	}
-	return map[string]any{"base64": base64.StdEncoding.EncodeToString(b)}
+	return httprequestremap.CookieMap(r)
 }
 
 func applyRemap(root any, template any, requestUUID string) any {
-	switch t := template.(type) {
-	case map[string]any:
-		out := map[string]any{}
-		for k, v := range t {
-			out[k] = applyRemap(root, v, requestUUID)
-		}
-		return out
-	case []any:
-		out := make([]any, 0, len(t))
-		for _, v := range t {
-			out = append(out, applyRemap(root, v, requestUUID))
-		}
-		return out
-	case string:
-		expr := strings.TrimSpace(t)
-		if expr == "" {
-			return ""
-		}
-		// Built-ins (kept minimal): uuid() and now().
-		if expr == "uuid()" {
-			return requestUUID
-		}
-		if expr == "now()" {
-			return time.Now().UTC().Format(time.RFC3339Nano)
-		}
-		if strings.HasPrefix(expr, "$") {
-			return evalJSONPath(root, expr)
-		}
-		return t
-	default:
-		return template
-	}
+	return httprequestremap.ApplyTemplate(root, template, httprequestremap.Builtins{UUID: requestUUID})
 }
 
 func evalJSONPath(root any, expr string) any {
-	results, err := jsonpath.Retrieve(expr, root)
-	if err != nil {
-		return nil
-	}
-	if len(results) == 0 {
-		return nil
-	}
-	if len(results) == 1 {
-		return results[0]
-	}
-	return results
+	return httprequestremap.EvalJSONPath(root, expr)
 }
 
 func uuidV4() (string, error) {

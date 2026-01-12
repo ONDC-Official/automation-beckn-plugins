@@ -165,7 +165,7 @@ func TestAuditSyncWithBearerTokenAndRemap(t *testing.T) {
 	defer server.Close()
 
 	configPath := writeTempYAML(t, ""+
-		"audit_url: " + server.URL + "\n"+
+		"audit_url: "+server.URL+"\n"+
 		"async: false\n"+
 		"audit_bearer_token: TOKEN\n"+
 		"remap:\n"+
@@ -262,7 +262,7 @@ func TestAuditHeadersJsonAuthorizationNotOverridden(t *testing.T) {
 	defer server.Close()
 
 	configPath := writeTempYAML(t, ""+
-		"audit_url: " + server.URL + "\n"+
+		"audit_url: "+server.URL+"\n"+
 		"async: false\n"+
 		"audit_bearer_token: TOKEN\n"+
 		"audit_headers:\n"+
@@ -299,7 +299,7 @@ func TestAuditAsyncDispatch(t *testing.T) {
 	defer server.Close()
 
 	configPath := writeTempYAML(t, ""+
-		"audit_url: " + server.URL + "\n"+
+		"audit_url: "+server.URL+"\n"+
 		"async: true\n"+
 		"queue_size: 10\n"+
 		"worker_count: 1\n"+

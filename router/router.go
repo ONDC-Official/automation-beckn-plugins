@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"strings"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	httprequestremap "github.com/extedcouD/HttpRequestRemapper"
 
 	"gopkg.in/yaml.v3"
 )
@@ -31,29 +33,29 @@ type Router struct {
 
 // RoutingRule represents a single routing rule.
 type routingRule struct {
-	Domain     string   `yaml:"domain"`
-	Version    string   `yaml:"version"`
-	TargetType string   `yaml:"targetType"` // "url", "publisher", "bpp", or "bap"
-	Target     target   `yaml:"target,omitempty"`
-	Endpoints  []string `yaml:"endpoints"`
-	RouteOnNACK bool     `yaml:"routeOnNACK,omitempty"`
+	Domain      string   `yaml:"domain"`
+	Version     string   `yaml:"version"`
+	TargetType  string   `yaml:"targetType"` // "url", "publisher", "bpp", or "bap"
+	Target      target   `yaml:"target,omitempty"`
+	Endpoints   []string `yaml:"endpoints"`
 	ActAsProxy  bool     `yaml:"actAsProxy,omitempty"`
 }
 
 // Target contains destination-specific details.
 type target struct {
-	URL         string `yaml:"url,omitempty"`         // URL for "url" or gateway endpoint for "bpp"/"bap"
-	PublisherID string `yaml:"publisherId,omitempty"` // For "msgq" type
-	ExcludeAction bool `yaml:"excludeAction,omitempty"` // For "url" type to exclude appending action to URL path
+	URL           string `yaml:"url,omitempty"`           // URL for "url" or gateway endpoint for "bpp"/"bap"
+	JsonPath      string `yaml:"jsonPath,omitempty"`     // JSONPath to extract URL from http request"
+	PublisherID   string `yaml:"publisherId,omitempty"`   // For "msgq" type
+	ExcludeAction bool   `yaml:"excludeAction,omitempty"` // For "url" type to exclude appending action to URL path
 }
 
 // TargetType defines possible target destinations.
 const (
 	targetTypeURL       = "url"       // Route to a specific URL
+	targetTypeJSONPath  = "jsonPath"  // Route to a URL extracted via JSONPath
 	targetTypePublisher = "publisher" // Route to a publisher
 	targetTypeBPP       = "bpp"       // Route to a BPP endpoint
 	targetTypeBAP       = "bap"       // Route to a BAP endpoint
-	targetTypeWorkbenchMock = "workbench-mock" // Route to workbench mock service
 )
 
 // New initializes a new Router instance with the provided configuration.
@@ -148,8 +150,13 @@ func (r *Router) loadRules(configPath string) error {
 					TargetType: rule.TargetType,
 					URL:        parsedURL,
 				}
+			case targetTypeJSONPath:
+				route = &model.Route{
+					TargetType: rule.TargetType,
+					JsonPath:  rule.Target.JsonPath,
+					URL:        nil,
+				}
 			}
-			
 			// Check for conflicting v2 rules
 			if isV2Version(rule.Version) {
 				if _, exists := r.rules[domain][rule.Version][endpoint]; exists {
@@ -196,6 +203,10 @@ func validateRules(rules []routingRule) error {
 				}
 			}
 			continue
+		case targetTypeJSONPath:
+			if rule.Target.JsonPath == "" {
+				return fmt.Errorf("invalid rule: jsonPath is required for targetType 'jsonPath'")
+			}
 		default:
 			return fmt.Errorf("invalid rule: unknown targetType '%s'", rule.TargetType)
 		}
@@ -204,7 +215,7 @@ func validateRules(rules []routingRule) error {
 }
 
 // Route determines the routing destination based on the request context.
-func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.Route, error) {
+func (r *Router) Route(ctx context.Context, url *url.URL, body []byte, request *http.Request) (*model.Route, error) {
 	// Parse the body to extract domain and version
 	var requestBody struct {
 		Context struct {
@@ -258,7 +269,27 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.R
 		return handleProtocolMapping(route, requestBody.Context.BPPURI, endpoint)
 	case targetTypeBAP:
 		return handleProtocolMapping(route, requestBody.Context.BAPURI, endpoint)
+	case targetTypeJSONPath:
+		// Extract URL using JSONPath
+		value, err := GetValueFromRequest(request, route.JsonPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract URL using JSONPath '%s': %w", route.JsonPath, err)
+		}
+		urlStr, ok := value.(string)
+		if !ok || strings.TrimSpace(urlStr) == "" {
+			return nil, fmt.Errorf("extracted value using JSONPath '%s' is not a valid non-empty string", route.JsonPath)
+		}
+		targetURL, err := url.Parse(urlStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid URL extracted using JSONPath '%s': %w", route.JsonPath, err)
+		}
+		targetURL.Path = joinPath(targetURL, endpoint)
+		return &model.Route{
+			TargetType:  targetTypeURL,
+			URL:         targetURL,
+			ActAsProxy:  route.ActAsProxy,},nil
 	}
+
 	return route, nil
 }
 
@@ -270,10 +301,9 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.R
 			return nil, fmt.Errorf("could not determine destination for endpoint '%s': neither request contained a %s URI nor was a default URL configured in routing rules", endpoint, strings.ToUpper(route.TargetType))
 		}
 		return &model.Route{
-			TargetType: targetTypeURL,
-			URL:        route.URL,
-			ActAsProxy: route.ActAsProxy,
-			RouteOnNACK: route.RouteOnNACK,
+			TargetType:  targetTypeURL,
+			URL:         route.URL,
+			ActAsProxy:  route.ActAsProxy,
 		}, nil
 	}
 	targetURL, err := url.Parse(target)
@@ -282,10 +312,9 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.R
 	}
 	targetURL.Path = joinPath(targetURL, endpoint)
 	return &model.Route{
-		TargetType: targetTypeURL,
-		URL:        targetURL,
-		ActAsProxy: route.ActAsProxy,
-		RouteOnNACK: route.RouteOnNACK,
+		TargetType:  targetTypeURL,
+		URL:         targetURL,
+		ActAsProxy:  route.ActAsProxy,
 	}, nil
 }
 
@@ -299,4 +328,8 @@ func joinPath(u *url.URL, endpoint string) string {
 // isV2Version checks if the version is 2.x.x
 func isV2Version(version string) bool {
 	return strings.HasPrefix(version, "2.")
+}
+
+func GetValueFromRequest(r *http.Request, jsonPath string) (any, error) {
+	return httprequestremap.EvalJSONPathFromRequest(r, jsonPath, nil), nil
 }
