@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"ondcworkbench/internal/apiservice"
+	"strings"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -51,12 +52,23 @@ func ValidateAndExtractPayload(ctx context.Context,body []byte,txnProperties api
 }
 
 func GetRequestData(payload apiservice.PayloadEnvelope, moduleType apiservice.ModuleType, moduleRole apiservice.ModuleRole, URL url.URL) (apiservice.RequestOwner, string, error) {
+	if(moduleType == apiservice.Caller){
+		action := payload.Context.Action
+		if(strings.HasPrefix(action,"on_")) {
+			moduleRole = apiservice.BPP
+		}else{
+			moduleRole = apiservice.BAP
+		}
+	}
+	
 	// Create a composite key for switch
 	key := fmt.Sprintf("%s-%s", moduleType, moduleRole)
 	
 	var subscriberURI string
 	var owner apiservice.RequestOwner
 	
+	
+
 	switch key {
 	case fmt.Sprintf("%s-%s", apiservice.Receiver, apiservice.BAP):
 		// Receiver BAP receives requests at bap_uri from BPP (Seller side)

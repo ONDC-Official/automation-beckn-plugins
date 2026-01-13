@@ -111,6 +111,8 @@ func (r *Router) loadRules(configPath string) error {
 			rule.ActAsProxy = new(bool)
 			*rule.ActAsProxy = true
 		}
+		fmt.Printf("Routing rule loaded: domain=%s, version=%s, targetType=%s, endpoints=%v, actAsProxy=%v\n",
+			domain, rule.Version, rule.TargetType, rule.Endpoints, *rule.ActAsProxy)
 
 		// Initialize domain map if not exists
 		if _, ok := r.rules[domain]; !ok {
@@ -130,6 +132,7 @@ func (r *Router) loadRules(configPath string) error {
 				route = &model.Route{
 					TargetType:  rule.TargetType,
 					PublisherID: rule.Target.PublisherID,
+					ActAsProxy:  *rule.ActAsProxy,
 				}
 			case targetTypeURL:
 				parsedURL, err := url.Parse(rule.Target.URL)
@@ -142,6 +145,7 @@ func (r *Router) loadRules(configPath string) error {
 				route = &model.Route{
 					TargetType: rule.TargetType,
 					URL:        parsedURL,
+					ActAsProxy: *rule.ActAsProxy,
 				}
 			case targetTypeBPP, targetTypeBAP:
 				var parsedURL *url.URL
@@ -155,11 +159,13 @@ func (r *Router) loadRules(configPath string) error {
 				route = &model.Route{
 					TargetType: rule.TargetType,
 					URL:        parsedURL,
+					ActAsProxy: *rule.ActAsProxy,
 				}
 			case targetTypeJSONPath:
 				route = &model.Route{
 					TargetType: rule.TargetType,
 					JsonPath:  rule.Target.JsonPath,
+					ActAsProxy: *rule.ActAsProxy,
 					URL:        nil,
 				}
 			}
@@ -170,6 +176,7 @@ func (r *Router) loadRules(configPath string) error {
 				}
 			}
 			r.rules[domain][rule.Version][endpoint] = route
+			fmt.Printf("  Mapped endpoint '%s' to route: %+v\n", endpoint, route)
 		}
 	}
 
@@ -226,7 +233,8 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte, request *
 	var requestBody struct {
 		Context struct {
 			Domain  string `json:"domain"`
-			Version string `json:"version"`
+			Version string `json:"version,omitempty"`
+			CoreVersion string `json:"core_version,omitempty"`
 			BPPURI  string `json:"bpp_uri,omitempty"`
 			BAPURI  string `json:"bap_uri,omitempty"`
 		} `json:"context"`
@@ -238,9 +246,14 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte, request *
 	// Extract the endpoint from the URL
 	endpoint := path.Base(url.Path)
 
+	version := requestBody.Context.Version
+	if(version == ""){
+		version = requestBody.Context.CoreVersion
+	}
+
 	// For v2.x.x, ignore domain and use wildcard; for v1.x.x, use actual domain
 	domain := requestBody.Context.Domain
-	if isV2Version(requestBody.Context.Version) {
+	if isV2Version(version) {
 		domain = "*"
 	}
 
@@ -248,26 +261,26 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte, request *
 	domainRules, ok := r.rules[domain]
 	if !ok {
 		if domain == "*" {
-			return nil, fmt.Errorf("no routing rules found for version %s", requestBody.Context.Version)
+			return nil, fmt.Errorf("no routing rules found for version %s", version)
 		}
 		return nil, fmt.Errorf("no routing rules found for domain %s", requestBody.Context.Domain)
 	}
 
-	versionRules, ok := domainRules[requestBody.Context.Version]
+	versionRules, ok := domainRules[version]
 	if !ok {
 		if domain == "*" {
-			return nil, fmt.Errorf("no routing rules found for version %s", requestBody.Context.Version)
+			return nil, fmt.Errorf("no routing rules found for version %s", version)
 		}
-		return nil, fmt.Errorf("no routing rules found for domain %s version %s", requestBody.Context.Domain, requestBody.Context.Version)
+		return nil, fmt.Errorf("no routing rules found for domain %s version %s", requestBody.Context.Domain, version)
 	}
 
 	route, ok := versionRules[endpoint]
 	if !ok {
 		if domain == "*" {
-			return nil, fmt.Errorf("endpoint '%s' is not supported for version %s in routing config", endpoint, requestBody.Context.Version)
+			return nil, fmt.Errorf("endpoint '%s' is not supported for version %s in routing config", endpoint, version)
 		}
 		return nil, fmt.Errorf("endpoint '%s' is not supported for domain %s and version %s in routing config",
-			endpoint, requestBody.Context.Domain, requestBody.Context.Version)
+			endpoint, requestBody.Context.Domain, version)
 	}
 	// Handle BPP/BAP routing with request URIs
 	switch route.TargetType {

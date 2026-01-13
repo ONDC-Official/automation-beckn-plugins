@@ -88,7 +88,11 @@ func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Req
 		log.Errorf(ctx,err,"payload receive failed")
 		return err
 	}
-	requestOwner,subscriberURL, err := payloadutils.GetRequestData(payloadEnv,apiservice.ModuleType(w.Config.ModuleType),apiservice.ModuleRole(w.Config.ModuleRole),*request.URL)
+	requestOwner,subscriberURL, err := payloadutils.GetRequestData(
+		payloadEnv,
+		apiservice.ModuleType(w.Config.ModuleType),
+		apiservice.ModuleRole(w.Config.ModuleRole),
+		*request.URL)
 	if(err != nil){
 		log.Errorf(ctx,err,"payload receive failed")
 		return err
