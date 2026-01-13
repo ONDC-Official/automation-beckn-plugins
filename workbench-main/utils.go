@@ -27,6 +27,9 @@ func validateConfig(config *Config) error {
 	if config.ModuleRole != "BAP" && config.ModuleRole != "BPP" {
 		return fmt.Errorf("module role must be either 'BAP' or 'BPP'")
 	}
+	if(config.MockServiceURL == ""){
+		return fmt.Errorf("mock service URL cannot be empty")
+	}
 	return nil
 }
 
@@ -80,6 +83,14 @@ func setRequestCookies(requestData *apiservice.WorkbenchRequestData) error {
 		Name: "ttl_seconds",
 		Value: fmt.Sprintf("%d", secs),
 	})
+
+	if(requestData.RequestOwner == apiservice.BuyerNP || requestData.RequestOwner == apiservice.SellerNP){
+		httpReq.AddCookie(&http.Cookie{
+			Name: "mock_url",
+			Value: requestData.MockURL,
+		})
+	}
+
 	return nil
 }
 

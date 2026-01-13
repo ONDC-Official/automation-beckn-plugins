@@ -18,6 +18,7 @@ func (w *workbenchProvider) New(ctx context.Context,cache definition.Cache,confi
 	protocolVersion := config["protocolVersion"]
 	protocolDomain := config["protocolDomain"]
 	ModuleRole := config["moduleRole"]
+	mockServiceURL := config["mockServiceURL"]
 
 	if(ModuleRole != "BAP" && ModuleRole != "BPP"){
 		return nil,nil, fmt.Errorf("invalid moduleRole '%s'. Allowed values are 'BAP' or 'BPP'",ModuleRole)
@@ -41,6 +42,7 @@ func (w *workbenchProvider) New(ctx context.Context,cache definition.Cache,confi
 		ModuleRole: ModuleRole,
 		ModuleType: ModuleType,
 		ConfigServiceURL: configServiceURL,
+		MockServiceURL: mockServiceURL,
 	})
 }
 // Provider is the exported provider instance for the Workbench plugin

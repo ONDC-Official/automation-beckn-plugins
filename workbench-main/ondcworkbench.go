@@ -23,6 +23,7 @@ type Config struct {
 	ModuleRole string // BAP or BPP
 	ModuleType string // caller or receiver
 	ConfigServiceURL string
+	MockServiceURL  string
 	TransactionProperties apiservice.TransactionProperties
 }
 
@@ -112,6 +113,14 @@ func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Req
 	}
 	if(receiverErr == nil){
 		log.Infof(context.Background(),"payload received successfully for transaction ID: %s",workbenchRequestData.TransactionID)
+
+		mockURL := ""
+		if(workbenchRequestData.UsecaseID == "PLAYGROUND_FLOW"){
+			mockURL = w.Config.MockServiceURL + "/playground"
+		}else{
+			
+		}
+		workbenchRequestData.MockURL = mockURL
 		err:= setRequestCookies(workbenchRequestData)
 		if(err != nil){
 			log.Errorf(ctx,err,"failed to set request cookies for transaction ID: %s",workbenchRequestData.TransactionID)

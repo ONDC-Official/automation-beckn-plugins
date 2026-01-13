@@ -66,6 +66,7 @@ type WorkbenchRequestData struct {
 	FlowID string
 	SessionID string
 	UsecaseID string
+	MockURL string
 }
 // TransactionProperties represents the `x-transaction-properties` configuration.
 //

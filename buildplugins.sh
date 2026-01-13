@@ -53,5 +53,7 @@ build_plugin "networkobservability" "network-observability" "./cmd"
 build_plugin "cache" "cache" "./cmd"
 build_plugin "router" "router" "./cmd"
 build_plugin "schemavalidator" "schemavalidator" "./cmd"
+build_plugin "signvalidator" "signvalidator" "./cmd"
+build_plugin "signer" "signer" "./cmd"
 
 echo "Done. Plugins are in: $PLUGINS_DIR"

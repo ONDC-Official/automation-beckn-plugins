@@ -1,12 +1,12 @@
 package main
 
 import (
+	"cache"
 	"context"
 	"errors"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/cache"
 )
 
 // cacheProvider implements the CacheProvider interface for the cache plugin.
