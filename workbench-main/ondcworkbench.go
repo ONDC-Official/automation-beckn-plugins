@@ -11,6 +11,7 @@ import (
 	contextvalidatotors "ondcworkbench/internal/ondc/contextValidatotors"
 	"ondcworkbench/internal/ondc/payloadutils"
 	"ondcworkbench/internal/receiver"
+	"strings"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
@@ -118,7 +119,12 @@ func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Req
 		if(workbenchRequestData.UsecaseID == "PLAYGROUND_FLOW"){
 			mockURL = w.Config.MockServiceURL + "/playground"
 		}else{
-			
+			// check if MockServiceURL has localhost 
+			if strings.Contains(w.Config.MockServiceURL,"localhost"){
+				mockURL = fmt.Sprintf("%s/%s",w.Config.MockServiceURL,w.Config.ProtocolDomain)
+			}else{
+				mockURL = fmt.Sprintf("%s/%s/%s",w.Config.MockServiceURL,w.Config.ProtocolDomain,w.Config.ProtocolVersion)
+			}
 		}
 		workbenchRequestData.MockURL = mockURL
 		err:= setRequestCookies(workbenchRequestData)
