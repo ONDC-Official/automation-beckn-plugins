@@ -148,6 +148,7 @@ func newMiddlewareFromConfig(ctx context.Context, parsed Config) (func(http.Hand
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			log.Infof(r.Context(),"Running network-observability middleware for %s %s", r.Method, r.URL.Path)
 			requestUUID, uuidErr := uuidV4()
 			if uuidErr != nil {
 				log.Errorf(r.Context(), uuidErr, "network-observability: failed generating uuid")

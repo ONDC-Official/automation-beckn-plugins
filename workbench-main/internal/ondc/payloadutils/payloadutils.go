@@ -51,7 +51,7 @@ func ValidateAndExtractPayload(ctx context.Context,body []byte,txnProperties api
 	return envelope,bodyRaw,nil
 }
 
-func GetRequestData(payload apiservice.PayloadEnvelope, moduleType apiservice.ModuleType, moduleRole apiservice.ModuleRole, URL url.URL) (apiservice.RequestOwner, string, error) {
+func GetRequestData(payload apiservice.PayloadEnvelope, moduleType apiservice.ModuleType, moduleRole apiservice.ModuleRole, URL url.URL) (apiservice.RequestOwner, string,string, error) {
 	if(moduleType == apiservice.Caller){
 		action := payload.Context.Action
 		if(strings.HasPrefix(action,"on_")) {
@@ -66,34 +66,37 @@ func GetRequestData(payload apiservice.PayloadEnvelope, moduleType apiservice.Mo
 	
 	var subscriberURI string
 	var owner apiservice.RequestOwner
-	
+	var subscriberID string
 	
 
 	switch key {
 	case fmt.Sprintf("%s-%s", apiservice.Receiver, apiservice.BAP):
 		// Receiver BAP receives requests at bap_uri from BPP (Seller side)
-		subscriberURI = payload.Context.BapURI
+		subscriberURI = payload.Context.BapURI // coutner party np to forward requests
+		subscriberID = payload.Context.BapID // it our own ID for signing purposes
 		if subscriberURI == "" {
-			return "", "", NewBadRequestNackError("bap_uri is missing in context", payload.Context)
+			return "", "","" ,NewBadRequestNackError("bap_uri is missing in context", payload.Context)
 		}
 		owner = apiservice.SellerNP
 		
 	case fmt.Sprintf("%s-%s", apiservice.Receiver, apiservice.BPP):
 		// Receiver BPP receives requests at bpp_uri from BAP (Buyer side)
 		subscriberURI = payload.Context.BppURI
+		subscriberID = payload.Context.BppID
 		if subscriberURI == "" {
-			return "", "", NewBadRequestNackError("bpp_uri is missing in context", payload.Context)
+			return "", "", "", NewBadRequestNackError("bpp_uri is missing in context", payload.Context)
 		}
 		owner = apiservice.BuyerNP
 		
 	case fmt.Sprintf("%s-%s", apiservice.Caller, apiservice.BAP):
 		// Caller BAP makes requests to BPP (Buyer side calling Seller)
 		subscriberURI = payload.Context.BppURI
+		subscriberID = payload.Context.BapID
 		if subscriberURI == "" {
 			// Fallback to query parameter
 			subscriberURI = URL.Query().Get("subscriber_url")
 			if subscriberURI == "" {
-				return "", "", NewBadRequestHTTPError("bpp_uri is missing in context and subscriber_url query param is also missing")
+				return "", "", "", NewBadRequestHTTPError("bpp_uri is missing in context and subscriber_url query param is also missing")
 			}
 		}
 		owner = apiservice.BuyerNP
@@ -101,16 +104,17 @@ func GetRequestData(payload apiservice.PayloadEnvelope, moduleType apiservice.Mo
 	case fmt.Sprintf("%s-%s", apiservice.Caller, apiservice.BPP):
 		// Caller BPP makes requests to BAP (Seller side calling Buyer)
 		subscriberURI = payload.Context.BapURI
+		subscriberID = payload.Context.BppID
 		if subscriberURI == "" {
-			return "", "", NewBadRequestHTTPError("bap_uri is missing in context")
+			return "", "", "", NewBadRequestHTTPError("bap_uri is missing in context")
 		}
 		owner = apiservice.SellerNP
 		
 	default:
-		return "", "", fmt.Errorf("unable to determine request owner and subscriber url for moduleType: %s and moduleRole: %s", moduleType, moduleRole)
+		return "", "", "", fmt.Errorf("unable to determine request owner and subscriber url for moduleType: %s and moduleRole: %s", moduleType, moduleRole)
 	}
 	
-	return owner, subscriberURI, nil
+	return owner, subscriberURI, subscriberID, nil
 }
 
 func NewBadRequestNackError(msg string,ondcContext any) error {

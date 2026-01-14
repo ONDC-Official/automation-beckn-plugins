@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"errors"
 	"fmt"
 
 	"golang.org/x/crypto/blake2b"
@@ -43,17 +42,18 @@ func hash(payload []byte, createdAt, expiresAt int64) (string, error) {
 
 // generateSignature signs the given signing string using the provided private key.
 func generateSignature(signingString []byte, privateKeyBase64 string) ([]byte, error) {
+	fmt.Printf("Generating signature for signing string: %s\n%s", string(signingString), privateKeyBase64)
 	privateKeyBytes, err := base64.StdEncoding.DecodeString(privateKeyBase64)
 	if err != nil {
 		return nil, fmt.Errorf("error decoding private key: %w", err)
 	}
-
-	if len(privateKeyBytes) != ed25519.SeedSize {
-		return nil, errors.New("invalid seed length")
-	}
+	fmt.Printf("Decoded private key bytes: %x\n", len(privateKeyBytes))
+	// if len(privateKeyBytes) != ed25519.SeedSize {
+	// 	return nil, errors.New("invalid seed length")
+	// }
 
 	// Generate the private key from the seed
-	privateKey := ed25519.NewKeyFromSeed(privateKeyBytes)
+	privateKey := ed25519.NewKeyFromSeed(privateKeyBytes[:32])
 	return ed25519.Sign(privateKey, signingString), nil
 }
 

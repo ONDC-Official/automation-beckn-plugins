@@ -147,7 +147,7 @@ func (k *KeyMgr) createAuthorizationHeader(body string) (string, error) {
 
 func (e *Env) getRegistryURL() string {
 	// Use IN_HOUSE_REGISTRY URL as specified
-	registryURL := "https://dev-automation.registry.ondc.org/v2.0/"
+	registryURL := "https://staging.registry.ondc.org/v2.0/"
 	if customURL := viper.GetString("IN_HOUSE_REGISTRY"); customURL != "" {
 		registryURL = customURL
 	}

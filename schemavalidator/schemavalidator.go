@@ -80,7 +80,7 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	version := payloadData.Context.Version
 	version = fmt.Sprintf("v%s", version)
 
-	endpoint := path.Base(url.String())
+	endpoint := path.Base(url.Path)
 	log.Debugf(ctx, "Handling request for endpoint for schema: %s", endpoint)
 	domain := strings.ToLower(cxtDomain)
 	domain = strings.ReplaceAll(domain, ":", "_")
@@ -192,6 +192,7 @@ func (v *schemaValidator) initialise() error {
 				uniqueKey := fmt.Sprintf("%s_%s_%s", domain, version, schemaFileName)
 				// Store the compiled schema in the SchemaCache using the unique key.
 				v.schemaCache[uniqueKey] = compiledSchema
+				fmt.Printf("Loaded schema: %s\n", uniqueKey)
 			}
 		}
 		return nil

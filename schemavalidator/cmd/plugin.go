@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"schemavalidator"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/schemavalidator"
 )
 
 // schemaValidatorProvider provides instances of schemaValidator.

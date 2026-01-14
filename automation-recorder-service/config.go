@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -40,6 +42,12 @@ type config struct {
 }
 
 func loadConfig() (config, error) {
+	// Load .env file if it exists
+	if err := godotenv.Load(); err != nil {
+		// It's okay if .env file doesn't exist, we'll use OS environment variables
+		fmt.Printf("Warning: .env file not found, using OS environment variables only\n")
+	}
+
 	listenAddr := strings.TrimSpace(os.Getenv("RECORDER_LISTEN_ADDR"))
 	if listenAddr == "" {
 		listenAddr = ":8089"
@@ -51,6 +59,8 @@ func loadConfig() (config, error) {
 	}
 
 	redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
+	e,y := os.LookupEnv("REDIS_ADDR")
+	fmt.Printf("hello %v xyz %v\n %v",os.Getenv("REDIS_ADDR"),e,y)
 	if redisAddr == "" {
 		redisAddr = strings.TrimSpace(os.Getenv("REDIS_HOST"))
 	}
@@ -103,5 +113,10 @@ func loadConfig() (config, error) {
 
 func newRedisClient(addr string) *redis.Client {
 	password := os.Getenv("REDIS_PASSWORD")
+	username := os.Getenv("REDIS_USERNAME")
+	fmt.Println("Connecting to Redis at", addr)
+	if username != "" {
+		return redis.NewClient(&redis.Options{Addr: addr, Username: username, Password: password, DB: 0})
+	}
 	return redis.NewClient(&redis.Options{Addr: addr, Password: password, DB: 0})
 }

@@ -88,7 +88,7 @@ func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Req
 		log.Errorf(ctx,err,"payload receive failed")
 		return err
 	}
-	requestOwner,subscriberURL, err := payloadutils.GetRequestData(
+	requestOwner,subscriberURL,subscriberID, err := payloadutils.GetRequestData(
 		payloadEnv,
 		apiservice.ModuleType(w.Config.ModuleType),
 		apiservice.ModuleRole(w.Config.ModuleRole),
@@ -104,6 +104,7 @@ func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Req
 		ModuleType: apiservice.ModuleType(w.Config.ModuleType),
 		RequestOwner: requestOwner,
 		SubscriberURL: subscriberURL,
+		SubscriberID: subscriberID,
 		TransactionID: payloadEnv.Context.TransactionID,
 		TransactionProperties: w.Config.TransactionProperties,
 	}

@@ -65,6 +65,7 @@ var RedisClientFunc = func(cfg *Config) RedisClient {
 	return redis.NewClient(&redis.Options{
 		Addr:     cfg.Addr,
 		Password: os.Getenv("REDIS_PASSWORD"),
+		Username: os.Getenv("REDIS_USERNAME"),
 		DB:       0,
 	})
 }

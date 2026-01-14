@@ -59,6 +59,7 @@ type WorkbenchRequestData struct {
 	RequestOwner RequestOwner
 	ModuleType  ModuleType
 	SubscriberURL string
+	SubscriberID   string
 	TransactionID string
 	TransactionProperties TransactionProperties
 	// Additional fields set after initialization

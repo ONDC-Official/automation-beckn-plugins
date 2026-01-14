@@ -36,10 +36,10 @@ func validateConfig(config *Config) error {
 func setRequestCookies(requestData *apiservice.WorkbenchRequestData) error {
 	httpReq := requestData.Request
 	
-	val, _ := httpReq.Cookie("header_validation")
-	if val != nil {
-		return payloadutils.NewBadRequestHTTPError("header validation bypass attempted!")
-	}
+	// val, _ := httpReq.Cookie("header_validation")
+	// if val != nil {
+	// 	return payloadutils.NewBadRequestHTTPError("header validation bypass attempted!")
+	// }
 
 	httpReq.AddCookie(&http.Cookie{
 		Name: "flow_id",
@@ -56,6 +56,10 @@ func setRequestCookies(requestData *apiservice.WorkbenchRequestData) error {
 	httpReq.AddCookie(&http.Cookie{
 		Name: "subscriber_url",
 		Value: requestData.SubscriberURL,
+	})
+	httpReq.AddCookie(&http.Cookie{
+		Name: "subscriber_id",
+		Value: requestData.SubscriberID,
 	})
 	httpReq.AddCookie(&http.Cookie{
 		Name: "usecase_id",

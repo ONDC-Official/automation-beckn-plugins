@@ -40,7 +40,8 @@ func (v *ondcValidator) ValidatePayload(ctx context.Context, url *url.URL, paylo
 	if err != nil {
 		return fmt.Errorf("invalid payload: %w", err)
 	}
-	endpoint := path.Base(url.String())
+	// endpoint := path.Base(url.String())
+	endpoint := path.Base(url.Path)
 	result,err := validationpkg.PerformL1validations(endpoint, payloadData, &validationutils.ValidationConfig{
 		StateFullValidations: v.config.StateFullValidations,
 		Debug: 			  v.config.DebugMode,
@@ -82,7 +83,7 @@ func (v *ondcValidator) SaveValidationData(ctx context.Context, url *url.URL, pa
 	if err != nil {
 		return fmt.Errorf("invalid payload: %w", err)
 	}
-	endpoint := path.Base(url.String())
+	endpoint := path.Base(url.Path)
 	storeConfig := storageutils.DefaultStorageConfig()
 	return validationpkg.PerformL1validationsSave(endpoint, uniqueKey, payloadData, v.storage, &storeConfig)
 }
