@@ -39,11 +39,16 @@ func (d *asyncDispatcher) start() {
 		for i := 0; i < d.workerCount; i++ {
 			go func() {
 				for job := range d.ch {
+					log.Infof(d.baseCtx, "[ASYNC] Starting job: %s", job.name)
+					start := time.Now()
 					ctx, cancel := context.WithTimeout(d.baseCtx, 15*time.Second)
 					err := job.fn(ctx)
 					cancel()
+					duration := time.Since(start)
 					if err != nil {
-						log.Warnf(d.baseCtx, "automation-recorder: async job %s failed: %v", job.name, err)
+						log.Warnf(d.baseCtx, "[ASYNC] Job %s failed after %v: %v", job.name, duration, err)
+					} else {
+						log.Infof(d.baseCtx, "[ASYNC] Job %s completed successfully in %v", job.name, duration)
 					}
 				}
 			}()
@@ -59,12 +64,15 @@ func (d *asyncDispatcher) enqueue(ctx context.Context, name string, fn func(cont
 	job := asyncJob{name: name, fn: fn}
 	select {
 	case d.ch <- job:
+		log.Infof(ctx, "[ASYNC] Job %s enqueued (queue depth: %d/%d)", name, len(d.ch), cap(d.ch))
 		return
 	default:
 		if d.dropOnQueueFull {
-			log.Warnf(ctx, "automation-recorder: async queue full; dropping job %s", name)
+			log.Warnf(ctx, "[ASYNC] Queue full (%d); dropping job %s", cap(d.ch), name)
 			return
 		}
+		log.Warnf(ctx, "[ASYNC] Queue full, blocking until space available for job %s", name)
 		d.ch <- job
+		log.Infof(ctx, "[ASYNC] Job %s enqueued after waiting", name)
 	}
 }

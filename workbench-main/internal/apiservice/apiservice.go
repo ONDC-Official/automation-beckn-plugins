@@ -12,7 +12,10 @@ const (
 	BPP ModuleRole = "BPP"
 )
 
-func GetSubscriberTypeFromModuleType(role ModuleRole) ModuleRole{
+func GetSubTypeFromModuleRole(role ModuleRole,moduleType ModuleType) ModuleRole{
+	if( moduleType == Receiver){
+		return role
+	}
 	if role == BAP {
 		return BPP
 	}
@@ -58,6 +61,7 @@ type WorkbenchRequestData struct {
 	BodyEnvelope PayloadEnvelope
 	RequestOwner RequestOwner
 	ModuleType  ModuleType
+	ModuleRole ModuleRole
 	SubscriberURL string
 	SubscriberID   string
 	TransactionID string

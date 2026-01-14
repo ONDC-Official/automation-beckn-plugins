@@ -68,27 +68,36 @@ type derivedFields struct {
 }
 
 func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue) (*emptypb.Empty, error) {
+	log.Infof(ctx, "[GRPC] LogEvent called, payload size: %d bytes", len(in.GetValue()))
+	
 	if in == nil {
+		log.Errorf(ctx, nil, "[GRPC] ERROR: Request is nil")
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 	var payload auditPayload
 	if err := json.Unmarshal(in.Value, &payload); err != nil {
+		log.Errorf(ctx, err, "[GRPC] ERROR: Failed to unmarshal payload")
 		return nil, status.Error(codes.InvalidArgument, "invalid JSON")
 	}
 	if payload.RequestBody == nil {
+		log.Errorf(ctx, nil, "[GRPC] ERROR: requestBody is nil")
 		return nil, status.Error(codes.InvalidArgument, "requestBody must be a JSON object")
 	}
 	if payload.ResponseBody == nil {
+		log.Errorf(ctx, nil, "[GRPC] ERROR: responseBody is nil")
 		return nil, status.Error(codes.InvalidArgument, "responseBody must be a JSON object")
 	}
 	if payload.AdditionalData == nil {
 		payload.AdditionalData = map[string]any{}
 	}
 
+	log.Infof(ctx, "[GRPC] Deriving fields from payload...")
 	derived, err := deriveFields(payload)
 	if err != nil {
+		log.Errorf(ctx, err, "[GRPC] ERROR: Failed to derive fields")
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	log.Infof(ctx, "[GRPC] Transaction: %s, Action: %s, Subscriber: %s", derived.TransactionID, derived.Action, derived.SubscriberURL)
 	if derived.PayloadID == "" {
 		derived.PayloadID, _ = uuidV4()
 	}
@@ -113,6 +122,7 @@ func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue
 	}
 
 	if !s.cfg.SkipCacheUpdate {
+		log.Infof(ctx, "[GRPC] Updating cache for key: %s (TTL: %v)", key, cacheTTL)
 		in := cacheAppendInput{
 			PayloadID:     derived.PayloadID,
 			TransactionID: derived.TransactionID,
@@ -124,6 +134,7 @@ func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue
 			Response:      payload.ResponseBody,
 		}
 		if err := updateTransactionAtomically(ctx, s.rdb, key, &in, cacheTTL); err != nil {
+			log.Errorf(ctx, err, "[GRPC] ERROR: Cache update failed")
 			if errors.Is(err, errNotFound) {
 				return nil, status.Error(codes.NotFound, "transaction not found")
 			}
@@ -137,21 +148,32 @@ func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue
 		if err := setFlowStatusIfExists(ctx, s.rdb, derived.TransactionID, derived.SubscriberURL, "AVAILABLE", 5*time.Hour); err != nil {
 			log.Warnf(ctx, "automation-recorder: failed to set flow status: %v", err)
 		}
+
+		log.Infof(ctx, "[GRPC] Cache updated successfully")
+	} else {
+		log.Infof(ctx, "[GRPC] Cache update skipped (SkipCacheUpdate=true)")
 	}
 
 	// Fire-and-forget side effects.
 	baseCtx := context.Background()
 	if !s.cfg.SkipNOPush {
+		log.Infof(ctx, "[GRPC] Enqueueing Network Observability push")
 		s.async.enqueue(baseCtx, "no-push", func(ctx context.Context) error {
 			return sendLogsToNO(ctx, s.cfg, s.httpClient, derived, payload.RequestBody, payload.ResponseBody)
 		})
+	} else {
+		log.Infof(ctx, "[GRPC] NO push skipped (SkipNOPush=true)")
 	}
 	if !s.cfg.SkipDBSave {
+		log.Infof(ctx, "[GRPC] Enqueueing database save")
 		s.async.enqueue(baseCtx, "db-save", func(ctx context.Context) error {
 			return savePayloadToDB(ctx, s.cfg, s.httpClient, s.rdb, derived, payload.RequestBody, payload.ResponseBody, payload.AdditionalData)
 		})
+	} else {
+		log.Infof(ctx, "[GRPC] DB save skipped (SkipDBSave=true)")
 	}
 
+	log.Infof(ctx, "[GRPC] LogEvent completed successfully")
 	return &emptypb.Empty{}, nil
 }
 

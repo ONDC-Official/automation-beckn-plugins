@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -39,18 +40,26 @@ type cacheAppendInput struct {
 
 func updateTransactionAtomically(ctx context.Context, rdb *redis.Client, key string, in *cacheAppendInput, cacheTTL time.Duration) error {
 	const maxAttempts = 8
+	fmt.Printf("[CACHE] Updating transaction atomically for key: %s\n", key)
 	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			fmt.Printf("[CACHE] Retry attempt %d/%d for key: %s\n", attempt+1, maxAttempts, key)
+		}
 		err := rdb.Watch(ctx, func(tx *redis.Tx) error {
 			val, err := tx.Get(ctx, key).Result()
 			if err != nil {
 				if errors.Is(err, redis.Nil) {
+					fmt.Printf("[CACHE] ERROR: Transaction not found for key: %s\n", key)
 					return errNotFound
 				}
+				fmt.Printf("[CACHE] ERROR: Failed to get transaction from Redis: %v\n", err)
 				return err
 			}
 
+			fmt.Printf("[CACHE] Retrieved transaction from Redis, size: %d bytes\n", len(val))
 			var txn map[string]any
 			if err := json.Unmarshal([]byte(val), &txn); err != nil {
+				fmt.Printf("[CACHE] ERROR: Failed to unmarshal transaction: %v\n", err)
 				return err
 			}
 			if txn == nil {

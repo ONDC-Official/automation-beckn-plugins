@@ -212,7 +212,7 @@ func newMiddlewareFromConfig(ctx context.Context, parsed Config) (func(http.Hand
 				dispatcher.enqueue(context.WithoutCancel(r.Context()), body)
 				return
 			}
-
+			log.Infof(r.Context(),"network-observability: sending audit event synchronously")
 			dispatcher.sendNow(r.Context(), body)
 		})
 	}, nil
@@ -528,6 +528,8 @@ func (d *auditDispatcher) sendNow(ctx context.Context, body []byte) {
 	}
 	if err := d.sender.Send(requestCtx, body); err != nil {
 		log.Errorf(requestCtx, err, "network-observability: audit dispatch failed")
+	}else{
+		log.Infof(requestCtx, "network-observability: audit event dispatched successfully")
 	}
 }
 

@@ -16,10 +16,13 @@ import (
 )
 
 func sendLogsToNO(ctx context.Context, cfg config, client *http.Client, d derivedFields, requestBody, responseBody map[string]any) error {
+	fmt.Printf("[NO] Sending logs to Network Observability for transaction: %s\n", d.TransactionID)
 	if strings.TrimSpace(cfg.NOURL) == "" {
+		fmt.Printf("[NO] Skipping: NO URL not configured\n")
 		return nil
 	}
 	if len(cfg.NOEnabledIn) > 0 && !cfg.NOEnabledIn[cfg.Env] {
+		fmt.Printf("[NO] Skipping: Not enabled for environment '%s'\n", cfg.Env)
 		return nil
 	}
 	if client == nil {
@@ -42,21 +45,31 @@ func sendLogsToNO(ctx context.Context, cfg config, client *http.Client, d derive
 	}
 
 	// Send request log.
+	fmt.Printf("[NO] Posting request log to %s\n", endpoint)
 	if err := postJSON(ctx, client, endpoint, cfg.NOToken, mergeMaps(common, map[string]any{"type": "request", "request": requestBody})); err != nil {
+		fmt.Printf("[NO] ERROR: Failed to post request log: %v\n", err)
 		return err
 	}
+	fmt.Printf("[NO] Request log posted successfully\n")
+	
 	// Send response log.
+	fmt.Printf("[NO] Posting response log to %s\n", endpoint)
 	if err := postJSON(ctx, client, endpoint, cfg.NOToken, mergeMaps(common, map[string]any{"type": "response", "response": responseBody, "statusCode": d.StatusCode})); err != nil {
+		fmt.Printf("[NO] ERROR: Failed to post response log: %v\n", err)
 		return err
 	}
+	fmt.Printf("[NO] Response log posted successfully\n")
 	return nil
 }
 
 func savePayloadToDB(ctx context.Context, cfg config, client *http.Client, rdb *redis.Client, d derivedFields, requestBody, responseBody map[string]any, additionalData map[string]any) error {
+	fmt.Printf("[DB] Saving payload to database for transaction: %s\n", d.TransactionID)
 	if strings.TrimSpace(cfg.DBBaseURL) == "" {
+		fmt.Printf("[DB] Skipping: DB URL not configured\n")
 		return nil
 	}
 	if len(cfg.DBEnabledIn) > 0 && !cfg.DBEnabledIn[cfg.Env] {
+		fmt.Printf("[DB] Skipping: Not enabled for environment '%s'\n", cfg.Env)
 		return nil
 	}
 	if client == nil {
@@ -65,13 +78,17 @@ func savePayloadToDB(ctx context.Context, cfg config, client *http.Client, rdb *
 	client.Timeout = cfg.DBTimeout
 
 	// Load transaction from Redis; if it doesn't exist, match TS behavior and skip DB save.
+	fmt.Printf("[DB] Loading transaction from Redis...\n")
 	txn, err := loadTransactionMap(ctx, rdb, createTransactionKey(d.TransactionID, d.SubscriberURL))
 	if err != nil {
+		fmt.Printf("[DB] ERROR: Failed to load transaction: %v\n", err)
 		return err
 	}
 	if txn == nil {
+		fmt.Printf("[DB] Transaction not found in Redis, skipping DB save\n")
 		return nil
 	}
+	fmt.Printf("[DB] Transaction loaded successfully\n")
 
 	sessionId := strings.TrimSpace(getString(txn, "sessionId"))
 	flowId := strings.TrimSpace(getString(txn, "flowId"))
@@ -111,6 +128,7 @@ func savePayloadToDB(ctx context.Context, cfg config, client *http.Client, rdb *
 			"sessionActive": true,
 		}
 		if err := postJSONWithAPIKey(ctx, client, createURL, cfg.DBAPIKey, sessionPayload); err != nil {
+			fmt.Printf("[DB] ERROR: Failed to create session in DB: %v\n", err)
 			return err
 		}
 	}
@@ -127,17 +145,33 @@ func savePayloadToDB(ctx context.Context, cfg config, client *http.Client, rdb *
 		messageID = getContextString(requestBody, "message_id")
 	}
 
-	// Allow passing request headers from additionalData (plugin remap can populate this).
-	reqHeader := any(map[string]any{})
-	if additionalData != nil {
-		if v, ok := additionalData["reqHeader"]; ok {
-			reqHeader = v
-		} else if v, ok := additionalData["req_header"]; ok {
-			reqHeader = v
-		} else if v, ok := additionalData["request_headers"]; ok {
-			reqHeader = v
-		}
-	}
+	 // Extract request headers from additionalData and convert to JSON string
+    var reqHeaderStr string
+    if additionalData != nil {
+        var headerData any
+        if v, ok := additionalData["reqHeader"]; ok {
+            headerData = v
+        } else if v, ok := additionalData["req_header"]; ok {
+            headerData = v
+        } else if v, ok := additionalData["request_headers"]; ok {
+            headerData = v
+        }
+        
+        if headerData != nil {
+            // Convert to JSON string
+            if headerBytes, err := json.Marshal(headerData); err == nil {
+                reqHeaderStr = string(headerBytes)
+            } else {
+                fmt.Printf("[DB] WARNING: Failed to marshal request headers: %v\n", err)
+                reqHeaderStr = "{}"
+            }
+        } else {
+            reqHeaderStr = "{}"
+        }
+    } else {
+        reqHeaderStr = "{}"
+    }
+	fmt.Printf("[DB] Request headers for DB payload: %+v\n", reqHeaderStr)
 
 	requestPayload := map[string]any{
 		"messageId":     messageID,
@@ -146,7 +180,7 @@ func savePayloadToDB(ctx context.Context, cfg config, client *http.Client, rdb *
 		"action":        action,
 		"bppId":         getContextString(requestBody, "bpp_id"),
 		"bapId":         getContextString(requestBody, "bap_id"),
-		"reqHeader":     reqHeader,
+		"reqHeader":     reqHeaderStr,
 		"jsonRequest":   requestBody,
 		"jsonResponse":  map[string]any{"response": responseBody},
 		"httpStatus":    d.StatusCode,
@@ -242,7 +276,8 @@ func postJSONWithAPIKey(ctx context.Context, client *http.Client, endpoint strin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("http %s returned %d", endpoint, resp.StatusCode)
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("http %s returned %d and message %s", endpoint, resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	return nil
 }

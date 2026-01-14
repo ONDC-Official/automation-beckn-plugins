@@ -57,6 +57,7 @@ func (r *WorkbenchRequestReceiver) ReceiveFromNP(ctx context.Context, requestDat
 		}
 		requestData.Difficulty = sessionData.SessionDifficulty
 		requestData.UsecaseID = sessionData.UsecaseId
+		r.assignTransactionToSession(ctx, requestData.SessionID, requestData.FlowID, requestData.TransactionID)
 		return nil
 	}
 	return payloadutils.NewPreconditionFailedHTTPError(
@@ -94,6 +95,7 @@ func (r *WorkbenchRequestReceiver) ReceiveFromMock(ctx context.Context, requestD
 	}
 	requestData.Difficulty = sessionData.SessionDifficulty
 	requestData.UsecaseID = sessionData.UsecaseId
+	r.assignTransactionToSession(ctx, requestData.SessionID, requestData.FlowID, requestData.TransactionID)
 	return nil
 }
 
@@ -168,4 +170,13 @@ func (r *WorkbenchRequestReceiver) defaultDifficulty() cache.SessionDifficulty {
 		HeaderValidaton:     true,
 		UseGzip:             false,
 	}
+}
+
+func (r *WorkbenchRequestReceiver) assignTransactionToSession(
+	ctx context.Context,
+	sessionID string,
+	flowID string,
+	transactionID string,
+){
+	r.sessionCache.UpdateSessionCache(ctx,sessionID,flowID,transactionID,0)
 }

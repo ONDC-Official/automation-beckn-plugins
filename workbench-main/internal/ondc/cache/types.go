@@ -82,6 +82,8 @@ type SessionCache struct {
 	Env                string            `json:"env"`
 	SessionDifficulty  SessionDifficulty `json:"sessionDifficulty"`
 	UsecaseId          string            `json:"usecaseId"`
+	ActiveFlow         *string           `json:"activeFlow,omitempty"`
+	FlowConfigs 	   map[string]any  `json:"flowConfigs,omitempty"`
 }
 
 type RequestProperties struct {

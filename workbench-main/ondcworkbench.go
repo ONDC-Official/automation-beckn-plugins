@@ -88,7 +88,7 @@ func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Req
 		log.Errorf(ctx,err,"payload receive failed")
 		return err
 	}
-	requestOwner,subscriberURL,subscriberID, err := payloadutils.GetRequestData(
+	requestOwner,subscriberURL,subscriberID,moduleRole, err := payloadutils.GetRequestData(
 		payloadEnv,
 		apiservice.ModuleType(w.Config.ModuleType),
 		apiservice.ModuleRole(w.Config.ModuleRole),
@@ -102,6 +102,7 @@ func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Req
 		BodyRaw:      payloadRaw,
 		BodyEnvelope: payloadEnv,
 		ModuleType: apiservice.ModuleType(w.Config.ModuleType),
+		ModuleRole: apiservice.ModuleRole(moduleRole),
 		RequestOwner: requestOwner,
 		SubscriberURL: subscriberURL,
 		SubscriberID: subscriberID,
@@ -121,14 +122,14 @@ func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Req
 		log.Infof(context.Background(),"payload received successfully for transaction ID: %s",workbenchRequestData.TransactionID)
 
 		mockURL := ""
-		if(workbenchRequestData.UsecaseID == "PLAYGROUND_FLOW"){
-			mockURL = w.Config.MockServiceURL + "/playground"
+		if(workbenchRequestData.UsecaseID == "PLAYGROUND-FLOW"){
+			mockURL = w.Config.MockServiceURL + "/playground/manual"
 		}else{
 			// check if MockServiceURL has localhost 
 			if strings.Contains(w.Config.MockServiceURL,"localhost"){
-				mockURL = fmt.Sprintf("%s/%s",w.Config.MockServiceURL,w.Config.ProtocolDomain)
+				mockURL = fmt.Sprintf("%s/%s/manual",w.Config.MockServiceURL,w.Config.ProtocolDomain)
 			}else{
-				mockURL = fmt.Sprintf("%s/%s/%s",w.Config.MockServiceURL,w.Config.ProtocolDomain,w.Config.ProtocolVersion)
+				mockURL = fmt.Sprintf("%s/%s/%s/manual",w.Config.MockServiceURL,w.Config.ProtocolDomain,w.Config.ProtocolVersion)
 			}
 		}
 		workbenchRequestData.MockURL = mockURL

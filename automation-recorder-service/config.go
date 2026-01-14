@@ -45,7 +45,9 @@ func loadConfig() (config, error) {
 	// Load .env file if it exists
 	if err := godotenv.Load(); err != nil {
 		// It's okay if .env file doesn't exist, we'll use OS environment variables
-		fmt.Printf("Warning: .env file not found, using OS environment variables only\n")
+		fmt.Printf("[CONFIG] Warning: .env file not found, using OS environment variables only\n")
+	} else {
+		fmt.Printf("[CONFIG] Successfully loaded .env file\n")
 	}
 
 	listenAddr := strings.TrimSpace(os.Getenv("RECORDER_LISTEN_ADDR"))
@@ -59,14 +61,16 @@ func loadConfig() (config, error) {
 	}
 
 	redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
-	e,y := os.LookupEnv("REDIS_ADDR")
-	fmt.Printf("hello %v xyz %v\n %v",os.Getenv("REDIS_ADDR"),e,y)
 	if redisAddr == "" {
 		redisAddr = strings.TrimSpace(os.Getenv("REDIS_HOST"))
 	}
 	if redisAddr == "" {
 		redisAddr = "127.0.0.1:6379"
 	}
+
+	fmt.Printf("[CONFIG] GRPC Listen Address: %s\n", listenAddr)
+	fmt.Printf("[CONFIG] HTTP Listen Address: %s\n", httpListenAddr)
+	fmt.Printf("[CONFIG] Redis Address: %s\n", redisAddr)
 
 	cfg := config{ListenAddr: listenAddr, HTTPListenAddr: httpListenAddr, RedisAddr: redisAddr}
 
@@ -105,6 +109,19 @@ func loadConfig() (config, error) {
 	cfg.DBTimeout = time.Duration(envInt("RECORDER_DB_TIMEOUT_MS", 5000)) * time.Millisecond
 	cfg.DBEnabledIn = parseEnvSet(os.Getenv("RECORDER_DB_ENABLED_ENVS"))
 	cfg.DBSessionPath = "/api/sessions"
+
+	fmt.Printf("[CONFIG] Environment: %s\n", cfg.Env)
+	fmt.Printf("[CONFIG] Skip Cache Update: %v\n", cfg.SkipCacheUpdate)
+	fmt.Printf("[CONFIG] Skip NO Push: %v\n", cfg.SkipNOPush)
+	fmt.Printf("[CONFIG] Skip DB Save: %v\n", cfg.SkipDBSave)
+	fmt.Printf("[CONFIG] Async Queue Size: %d\n", cfg.AsyncQueueSize)
+	fmt.Printf("[CONFIG] Async Workers: %d\n", cfg.AsyncWorkerCount)
+	fmt.Printf("[CONFIG] Drop On Queue Full: %v\n", cfg.DropOnQueueFull)
+	fmt.Printf("[CONFIG] API TTL Default: %d seconds\n", cfg.APITTLSecondsDefault)
+	fmt.Printf("[CONFIG] Cache TTL Default: %d seconds\n", cfg.CacheTTLSecondsDefault)
+	fmt.Printf("[CONFIG] Network Observability URL: %s\n", cfg.NOURL)
+	fmt.Printf("[CONFIG] Database Base URL: %s\n", cfg.DBBaseURL)
+	fmt.Printf("[CONFIG] Configuration loaded successfully\n")
 	// Matches TS: POST `${DATA_BASE_URL}/api/sessions/payload`
 	cfg.DBPayloadPath = "/api/sessions/payload"
 

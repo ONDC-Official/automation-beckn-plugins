@@ -131,7 +131,7 @@ func (s *Service) CreateTransaction(ctx context.Context, transSubKey string, req
 		return nil, errors.New("cache is nil")
 	}
 
-	subType := apiservice.GetSubscriberTypeFromModuleType(apiservice.ModuleRole(req.ModuleType))
+	subType := apiservice.GetSubTypeFromModuleRole(req.ModuleRole,req.ModuleType)
 
 	txn := &cache.TransactionCache{
 		SessionId:       req.SessionID,
