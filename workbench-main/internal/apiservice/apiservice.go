@@ -2,7 +2,8 @@ package apiservice
 
 import (
 	"net/http"
-	"ondcworkbench/internal/ondc/cache"
+
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/cache"
 )
 
 type ModuleRole string

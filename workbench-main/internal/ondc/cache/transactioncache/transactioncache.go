@@ -8,9 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"ondcworkbench/internal/apiservice"
-	cache "ondcworkbench/internal/ondc/cache"
-
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/apiservice"
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/cache"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 

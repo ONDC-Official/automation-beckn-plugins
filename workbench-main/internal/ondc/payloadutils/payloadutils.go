@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"ondcworkbench/internal/apiservice"
+
 	"strings"
 
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/apiservice"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )

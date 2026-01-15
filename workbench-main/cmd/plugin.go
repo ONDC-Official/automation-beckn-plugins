@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"ondcworkbench"
-	"ondcworkbench/internal/apiservice"
 
+	ondcworkbench "github.com/ONDC-Official/automation-beckn-plugins/workbench-main"
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/apiservice"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 

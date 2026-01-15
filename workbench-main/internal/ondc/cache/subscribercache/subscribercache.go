@@ -7,8 +7,7 @@ import (
 	"strings"
 	"time"
 
-	cache "ondcworkbench/internal/ondc/cache"
-
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/cache"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 

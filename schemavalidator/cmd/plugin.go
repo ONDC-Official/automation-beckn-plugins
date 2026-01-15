@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	"schemavalidator"
+
+	"github.com/ONDC-Official/automation-beckn-plugins/schemavalidator"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"

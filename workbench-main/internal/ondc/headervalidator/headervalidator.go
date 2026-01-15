@@ -7,11 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"ondcworkbench/internal/apiservice"
+
 	"regexp"
 	"strconv"
 	"time"
 
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/apiservice"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"golang.org/x/crypto/blake2b"
 )

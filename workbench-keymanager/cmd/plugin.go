@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"keymanager"
 
+	keymanager "github.com/ONDC-Official/automation-beckn-plugins/workbench-keymanager"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 

@@ -3,14 +3,15 @@ package receiver
 import (
 	"context"
 	"fmt"
-	"ondcworkbench/internal/apiservice"
-	"ondcworkbench/internal/ondc/cache"
-	"ondcworkbench/internal/ondc/cache/sessioncache"
-	"ondcworkbench/internal/ondc/cache/subscribercache"
-	"ondcworkbench/internal/ondc/cache/transactioncache"
-	"ondcworkbench/internal/ondc/payloadutils"
+
 	"time"
 
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/apiservice"
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/cache"
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/cache/sessioncache"
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/cache/subscribercache"
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/cache/transactioncache"
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/payloadutils"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 )
 

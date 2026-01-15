@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	"signer"
+
+	"github.com/ONDC-Official/automation-beckn-plugins/signer"
 
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )

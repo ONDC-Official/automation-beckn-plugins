@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"ondcworkbench/internal/apiservice"
-	"ondcworkbench/internal/ondc/cache"
-	"ondcworkbench/internal/ondc/cache/transactioncache"
-	"ondcworkbench/internal/ondc/payloadutils"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/apiservice"
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/cache"
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/cache/transactioncache"
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/payloadutils"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 )

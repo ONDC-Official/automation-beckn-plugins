@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	"router"
+
+	"github.com/ONDC-Official/automation-beckn-plugins/router"
 
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )

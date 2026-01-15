@@ -7,11 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"ondcworkbench/internal/apiservice"
-	"ondcworkbench/internal/ondc/payloadutils"
 	"strings"
 	"time"
 
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/apiservice"
+	"github.com/ONDC-Official/automation-beckn-plugins/workbench-main/internal/ondc/payloadutils"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/rickb777/date/period"
 )

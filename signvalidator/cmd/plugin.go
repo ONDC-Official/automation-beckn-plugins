@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	"signvalidator"
+
+	"github.com/ONDC-Official/automation-beckn-plugins/signvalidator"
 
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )

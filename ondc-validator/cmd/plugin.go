@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	ondcvalidator "ondcValidator"
 
+	ondcvalidator "github.com/ONDC-Official/automation-beckn-plugins/ondc-validator"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 

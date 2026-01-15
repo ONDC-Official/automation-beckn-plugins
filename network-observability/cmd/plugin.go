@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"net/http"
-	"networkobservability"
+
+	networkobservability "github.com/ONDC-Official/automation-beckn-plugins/network-observability"
 )
 
 type networkObservabilityProvider struct{}
