@@ -1,29 +1,54 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds Go plugins (.so) into ./plugins/<name>.so
+# Builds Go plugins (.so) into a specified directory
 #
 # Usage:
-#   ./buildplugins.sh
+#   ./buildplugins.sh [PLUGINS_DIR]
+#
+# Arguments:
+#   PLUGINS_DIR - Optional. Directory where plugins will be built (default: ./plugins)
+#
+# Examples:
+#   ./buildplugins.sh                          # Uses ./plugins
+#   ./buildplugins.sh /custom/path/plugins     # Uses /custom/path/plugins
+#   ./buildplugins.sh build-output/plugins     # Uses build-output/plugins
 #
 # Outputs:
-#   ./plugins/ondcValidator.so
-#   ./plugins/workbench.so
-#   ./plugins/keymanager.so
+#   <PLUGINS_DIR>/ondcValidator.so
+#   <PLUGINS_DIR>/workbench.so
+#   <PLUGINS_DIR>/keymanager.so
+#   ... etc
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGINS_DIR="$ROOT_DIR/plugins"
+
+# Accept plugins directory as first argument, or use default
+if [[ $# -gt 0 && -n "$1" ]]; then
+	PLUGINS_DIR="$1"
+	# Make it absolute if it's relative
+	if [[ "$PLUGINS_DIR" != /* ]]; then
+		PLUGINS_DIR="$ROOT_DIR/$PLUGINS_DIR"
+	fi
+else
+	PLUGINS_DIR="$ROOT_DIR/plugins"
+fi
+
 GO_BIN="${GO:-go}"
 TRIMPATH="${TRIMPATH:-0}"
 
 mkdir -p "$PLUGINS_DIR"
 
+echo "======================================"
+echo "Building Go Plugins"
+echo "======================================"
+echo "Output directory: $PLUGINS_DIR"
 echo "Go: $($GO_BIN version)"
 echo "Go env: GOOS=$($GO_BIN env GOOS) GOARCH=$($GO_BIN env GOARCH) GOROOT=$($GO_BIN env GOROOT)"
+echo "======================================"
 
 GOOS="$($GO_BIN env GOOS)"
 if [[ "$GOOS" == "windows" ]]; then
-	echo "Go plugins (-buildmode=plugin) are not supported on Windows." >&2
+	echo "❌ Go plugins (-buildmode=plugin) are not supported on Windows." >&2
 	exit 1
 fi
 
@@ -43,7 +68,7 @@ build_plugin() {
 	else
 		( cd "$ROOT_DIR/$module_dir" && "$GO_BIN" build -buildmode=plugin -o "$out" "$pkg" )
 	fi
-	echo "    Wrote: $out"
+	echo "    ✓ Wrote: $out"
 }
 
 build_plugin "ondcvalidator" "ondc-validator" "./cmd"
@@ -56,4 +81,6 @@ build_plugin "schemavalidator" "schemavalidator" "./cmd"
 build_plugin "signvalidator" "signvalidator" "./cmd"
 build_plugin "signer" "signer" "./cmd"
 
-echo "Done. Plugins are in: $PLUGINS_DIR"
+echo "======================================"
+echo "✅ Done! Plugins are in: $PLUGINS_DIR"
+echo "======================================"
