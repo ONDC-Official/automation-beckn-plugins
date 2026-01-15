@@ -12,6 +12,8 @@ replace golang.org/x/text => golang.org/x/text v0.32.0
 
 replace validationpkg => ./ondc-validator/validationpkg
 
+replace go.opentelemetry.io/otel => go.opentelemetry.io/otel v1.38.0
+
 require (
 	github.com/ONDC-Official/ondc-crypto-sdk-go v0.2.1
 	github.com/beckn-one/beckn-onix v1.3.0
