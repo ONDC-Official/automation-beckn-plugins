@@ -156,12 +156,47 @@ func (e *Env) getRegistryURL() string {
 
 func NewEnv() *Env {
 	env := Env{}
+
+	// Try to read .env file if present; do not panic if it's missing.
 	viper.SetConfigFile(".env")
 	if err := viper.ReadInConfig(); err != nil {
-		panic(err)
+		// ignore missing/parse errors so we can rely on OS envs in containers
 	}
+
+	// Allow environment variables (useful for Docker/k8s). Environment
+	// variables will override values from the .env file below where set.
+	viper.AutomaticEnv()
+
+	// Attempt to unmarshal whatever viper has (file + env). If Unmarshal
+	// fails for some reason, fall back to reading individual keys.
 	if err := viper.Unmarshal(&env); err != nil {
-		panic(err)
+		env.SubscriberID = viper.GetString("SUBSCRIBER_ID")
+		env.UniqueKeyID = viper.GetString("UNIQUE_KEY_ID")
+		env.SigningPrivate = viper.GetString("SIGNING_PRIVATE")
+		env.SigningPublic = viper.GetString("SIGNING_PUBLIC")
+		env.EncrPrivate = viper.GetString("ENCR_PRIVATE")
+		env.EncrPublic = viper.GetString("ENCR_PUBLIC")
+	} else {
+		// Ensure explicit OS env variables (if present) override values
+		if v := viper.GetString("SUBSCRIBER_ID"); v != "" {
+			env.SubscriberID = v
+		}
+		if v := viper.GetString("UNIQUE_KEY_ID"); v != "" {
+			env.UniqueKeyID = v
+		}
+		if v := viper.GetString("SIGNING_PRIVATE"); v != "" {
+			env.SigningPrivate = v
+		}
+		if v := viper.GetString("SIGNING_PUBLIC"); v != "" {
+			env.SigningPublic = v
+		}
+		if v := viper.GetString("ENCR_PRIVATE"); v != "" {
+			env.EncrPrivate = v
+		}
+		if v := viper.GetString("ENCR_PUBLIC"); v != "" {
+			env.EncrPublic = v
+		}
 	}
+
 	return &env
 }
