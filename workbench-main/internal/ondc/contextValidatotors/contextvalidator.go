@@ -104,19 +104,20 @@ func (cv *Validator) validateAsyncContext(ctx context.Context, payload apiservic
 	sortedContexts := sortApiDataByTimestampDesc(apiEntries)
 
 	subjectAction := payload.Context.Action
-	predecessorName := cv.getAsyncPredecessor(subjectAction)
-	if predecessorName != "" {
-		return cv.validateAsyncPath(ctx, payload, sortedContexts, predecessorName)
-	}
-	if result := cv.validateSyncPath(ctx, payload, transactionData); !result.Valid {
-		return result
-	}
 
 	// TTL validation: only for NP requests.
 	ttlResult := validateTtl(ctx, payload, transactionData, requestOwner)
 	log.Infof(ctx, "TTL validation result for action %s: valid=%t, error=%s", payload.Context.Action, ttlResult.Valid, ttlResult.Error)
 	if !ttlResult.Valid {
 		return ttlResult
+	}
+
+	predecessorName := cv.getAsyncPredecessor(subjectAction)
+	if predecessorName != "" {
+		return cv.validateAsyncPath(ctx, payload, sortedContexts, predecessorName)
+	}
+	if result := cv.validateSyncPath(ctx, payload, transactionData); !result.Valid {
+		return result
 	}
 
 	return cv.validateTransactionId(ctx, subjectAction, sortedContexts)
