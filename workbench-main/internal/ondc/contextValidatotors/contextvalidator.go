@@ -114,6 +114,7 @@ func (cv *Validator) validateAsyncContext(ctx context.Context, payload apiservic
 
 	// TTL validation: only for NP requests.
 	ttlResult := validateTtl(ctx, payload, transactionData, requestOwner)
+	log.Infof(ctx, "TTL validation result for action %s: valid=%t, error=%s", payload.Context.Action, ttlResult.Valid, ttlResult.Error)
 	if !ttlResult.Valid {
 		return ttlResult
 	}

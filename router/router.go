@@ -100,12 +100,12 @@ func (r *Router) loadRules(configPath string) error {
 	for _, rule := range config.RoutingRules {
 		// For v2.x.x, warn if domain is provided and normalize to wildcard "*"
 		domain := rule.Domain
-		if isV2Version(rule.Version) {
-			if domain != "" {
-				fmt.Printf("WARNING: Domain field '%s' is not needed for version %s and will be ignored. Consider removing it from your config.\n", domain, rule.Version)
-			}
-			domain = "*"
-		}
+		// if isV2Version(rule.Version) {
+		// 	if domain != "" {
+		// 		fmt.Printf("WARNING: Domain field '%s' is not needed for version %s and will be ignored. Consider removing it from your config.\n", domain, rule.Version)
+		// 	}
+		// 	domain = "*"
+		// }
 
 		if(rule.ActAsProxy == nil){
 			rule.ActAsProxy = new(bool)
@@ -170,11 +170,11 @@ func (r *Router) loadRules(configPath string) error {
 				}
 			}
 			// Check for conflicting v2 rules
-			if isV2Version(rule.Version) {
-				if _, exists := r.rules[domain][rule.Version][endpoint]; exists {
-					return fmt.Errorf("duplicate endpoint '%s' found for version %s. For v2.x.x, domain is ignored, so you can only define each endpoint once per version. Please remove the duplicate rule", endpoint, rule.Version)
-				}
-			}
+			// if isV2Version(rule.Version) {
+			// 	if _, exists := r.rules[domain][rule.Version][endpoint]; exists {
+			// 		return fmt.Errorf("duplicate endpoint '%s' found for version %s. For v2.x.x, domain is ignored, so you can only define each endpoint once per version. Please remove the duplicate rule", endpoint, rule.Version)
+			// 	}
+			// }
 			r.rules[domain][rule.Version][endpoint] = route
 			fmt.Printf("  Mapped endpoint '%s' to route: %+v\n", endpoint, route)
 		}
@@ -192,9 +192,9 @@ func validateRules(rules []routingRule) error {
 		}
 
 		// Domain is required only for v1.x.x
-		if !isV2Version(rule.Version) && rule.Domain == "" {
-			return fmt.Errorf("invalid rule: domain is required for version %s", rule.Version)
-		}
+		// if !isV2Version(rule.Version) && rule.Domain == "" {
+		// 	return fmt.Errorf("invalid rule: domain is required for version %s", rule.Version)
+		// }
 
 		// Validate based on TargetType
 		switch rule.TargetType {
@@ -253,9 +253,9 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte, request *
 
 	// For v2.x.x, ignore domain and use wildcard; for v1.x.x, use actual domain
 	domain := requestBody.Context.Domain
-	if isV2Version(version) {
-		domain = "*"
-	}
+	// if isV2Version(version) {
+	// 	domain = "*"
+	// }
 
 	// Lookup route in the optimized map
 	domainRules, ok := r.rules[domain]
@@ -345,10 +345,6 @@ func joinPath(u *url.URL, endpoint string) string {
 	return path.Join(u.Path, endpoint)
 }
 
-// isV2Version checks if the version is 2.x.x
-func isV2Version(version string) bool {
-	return strings.HasPrefix(version, "2.")
-}
 
 func GetValueFromRequest(r *http.Request, jsonPath string) (any, error) {
 	return httprequestremap.EvalJSONPathFromRequest(r, jsonPath, nil), nil
