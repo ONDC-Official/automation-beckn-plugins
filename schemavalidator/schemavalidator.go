@@ -179,7 +179,8 @@ func (v *schemaValidator) initialise() error {
 
 				// Extract domain, version, and schema filename from the parts.
 				// Validate that the extracted parts are non-empty.
-				domain := strings.TrimSpace(parts[0])
+				domain := strings.ToLower(strings.TrimSpace(parts[0]))
+				domain = strings.ReplaceAll(domain, ":", "_")
 				version := strings.TrimSpace(parts[1])
 				schemaFileName := strings.TrimSpace(parts[2])
 				schemaFileName = strings.TrimSuffix(schemaFileName, ".json")
