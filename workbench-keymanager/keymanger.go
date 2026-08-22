@@ -69,6 +69,16 @@ func (k *KeyMgr) DeleteKeyset(ctx context.Context, keyID string) error {
 }
 
 func (k *KeyMgr) LookupNPKeys(ctx context.Context, subscriberID string, uniqueKeyID string) (signingPublicKey string, encrPublicKey string, err error) {
+	// Workbench self-testing runs BAP and BPP as the same subscriber, so the
+	// "counterparty" signing this request is often our own workbench identity.
+	// Resolve that from local config instead of an external/registry lookup
+	// that may not exist in a local/offline stack (IN_HOUSE_REGISTRY unset or
+	// unreachable).
+	if k.env.SubscriberID != "" && subscriberID == k.env.SubscriberID &&
+		(uniqueKeyID == "" || uniqueKeyID == k.env.UniqueKeyID) {
+		return k.env.SigningPublic, k.env.EncrPublic, nil
+	}
+
 	// Prepare lookup request body
 	requestBody := map[string]string{
 		"subscriber_id": subscriberID,
@@ -102,6 +112,16 @@ func (k *KeyMgr) LookupNPKeys(ctx context.Context, subscriberID string, uniqueKe
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
+		// Registry unreachable (e.g. IN_HOUSE_REGISTRY not wired to a real
+		// service in a local/offline workbench stack — adr-0057). There is no
+		// other real signer in a closed local loop, so fall back to our own
+		// local keypair rather than hard-failing every self-test flow.
+		// Only applies when the request never got a response at all — a real
+		// reachable registry saying "not found" (below) still fails hard.
+		if k.env.SigningPublic != "" {
+			fmt.Printf("[LookupNPKeys] registry unreachable (%v), falling back to local keypair for subscriber_id: %s\n", err, subscriberID)
+			return k.env.SigningPublic, k.env.EncrPublic, nil
+		}
 		return "", "", fmt.Errorf("failed to perform lookup request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -141,6 +161,11 @@ func (k *KeyMgr) LookupNPKeys(ctx context.Context, subscriberID string, uniqueKe
 // using subscriber_id + domain (instead of ukId).
 // Used by the outgoing-encryption-middleware where ukId is not known for the counterparty.
 func (k *KeyMgr) LookupNPKeysByDomain(ctx context.Context, subscriberID string, domain string) (signingPublicKey string, encrPublicKey string, err error) {
+	// Same local self-lookup short-circuit as LookupNPKeys — see comment there.
+	if k.env.SubscriberID != "" && subscriberID == k.env.SubscriberID {
+		return k.env.SigningPublic, k.env.EncrPublic, nil
+	}
+
 	// Prepare lookup request body using domain instead of ukId
 	requestBody := map[string]string{
 		"subscriber_id": subscriberID,
@@ -173,6 +198,11 @@ func (k *KeyMgr) LookupNPKeysByDomain(ctx context.Context, subscriberID string, 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
+		// See the identical fallback in LookupNPKeys for rationale.
+		if k.env.SigningPublic != "" {
+			fmt.Printf("[LookupNPKeysByDomain] registry unreachable (%v), falling back to local keypair for subscriber_id: %s\n", err, subscriberID)
+			return k.env.SigningPublic, k.env.EncrPublic, nil
+		}
 		return "", "", fmt.Errorf("failed to perform lookup request: %w", err)
 	}
 	defer resp.Body.Close()
