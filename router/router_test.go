@@ -874,14 +874,18 @@ func TestFISTunnelRouting(t *testing.T) {
 	ctx := context.Background()
 
 	const (
-		tunnelURL = "https://fis-tunnel.example.com"
-		bppURI    = "https://np.example.com"
-		domain    = "ONDC:FIS12"
-		version   = "2.0.0"
+		tunnelURL  = "https://fis-tunnel.example.com"
+		gatewayURL = "https://gateway-np.example.com"
+		bppURI     = "https://np.example.com"
+		domain     = "ONDC:FIS12"
+		version    = "2.0.0"
 	)
 
-	makeRequest := func(body string, cookies ...*http.Cookie) *http.Request {
-		req := httptest.NewRequest(http.MethodPost, "https://gateway.example.com/confirm", strings.NewReader(body))
+	bodyWithBPP := `{"context": {"domain": "` + domain + `", "version": "` + version + `", "bpp_uri": "` + bppURI + `"}}`
+	bodyWithoutBPP := `{"context": {"domain": "` + domain + `", "version": "` + version + `"}}`
+
+	makeRequest := func(endpoint, body string, cookies ...*http.Cookie) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "https://workbench.example.com/"+endpoint, strings.NewReader(body))
 		for _, c := range cookies {
 			req.AddCookie(c)
 		}
@@ -889,42 +893,80 @@ func TestFISTunnelRouting(t *testing.T) {
 	}
 
 	tunnelCookie := &http.Cookie{Name: "use_tunnel_for_fis", Value: "true"}
+	gatewayCookie := &http.Cookie{Name: "use_gateway", Value: "true"}
 
 	tests := []struct {
-		name        string
-		setupTunnel bool
-		body        string
-		request     *http.Request
-		wantURL     string
-		wantErr     string
+		name         string
+		configFile   string
+		endpoint     string
+		setupTunnel  bool
+		setupGateway bool
+		body         string
+		cookies      []*http.Cookie
+		wantURL      string
+		wantErr      string
 	}{
 		{
-			name:        "bpp_uri present — routes directly to NP, skips tunnel",
+			name:        "bpp_uri present — still routes through the tunnel",
+			configFile:  "fis_caller.yaml",
+			endpoint:    "confirm",
 			setupTunnel: true,
-			body:        `{"context": {"domain": "` + domain + `", "version": "` + version + `", "bpp_uri": "` + bppURI + `"}}`,
-			request:     makeRequest(`{"context": {"domain": "`+domain+`", "version": "`+version+`", "bpp_uri": "`+bppURI+`"}}`, tunnelCookie),
-			wantURL:     bppURI + "/confirm",
-		},
-		{
-			name:        "bpp_uri absent — routes through FIS tunnel",
-			setupTunnel: true,
-			body:        `{"context": {"domain": "` + domain + `", "version": "` + version + `"}}`,
-			request:     makeRequest(`{"context": {"domain": "`+domain+`", "version": "`+version+`"}}`, tunnelCookie),
+			body:        bodyWithBPP,
+			cookies:     []*http.Cookie{tunnelCookie},
 			wantURL:     tunnelURL + "/confirm",
 		},
 		{
-			name:        "tunnel cookie absent — normal bpp routing, no bpp_uri means error",
+			name:        "bpp_uri absent — routes through the tunnel",
+			configFile:  "fis_caller.yaml",
+			endpoint:    "confirm",
 			setupTunnel: true,
-			body:        `{"context": {"domain": "` + domain + `", "version": "` + version + `"}}`,
-			request:     makeRequest(`{"context": {"domain": "` + domain + `", "version": "` + version + `"}}`), // no cookie
+			body:        bodyWithoutBPP,
+			cookies:     []*http.Cookie{tunnelCookie},
+			wantURL:     tunnelURL + "/confirm",
+		},
+		{
+			name:        "tunnel cookie set but FIS_TUNNEL_URL not configured — error",
+			configFile:  "fis_caller.yaml",
+			endpoint:    "confirm",
+			setupTunnel: false,
+			body:        bodyWithBPP,
+			cookies:     []*http.Cookie{tunnelCookie},
+			wantErr:     "use_tunnel_for_fis enabled but FIS_TUNNEL_URL not configured",
+		},
+		{
+			name:        "tunnel cookie absent — normal bpp routing to bpp_uri",
+			configFile:  "fis_caller.yaml",
+			endpoint:    "confirm",
+			setupTunnel: true,
+			body:        bodyWithBPP,
+			wantURL:     bppURI + "/confirm",
+		},
+		{
+			name:        "tunnel cookie absent and no bpp_uri — error",
+			configFile:  "fis_caller.yaml",
+			endpoint:    "confirm",
+			setupTunnel: true,
+			body:        bodyWithoutBPP,
 			wantErr:     "could not determine destination for endpoint 'confirm'",
 		},
 		{
-			name:        "tunnel cookie set but FIS_TUNNEL_URL not configured and no bpp_uri — error",
-			setupTunnel: false,
-			body:        `{"context": {"domain": "` + domain + `", "version": "` + version + `"}}`,
-			request:     makeRequest(`{"context": {"domain": "`+domain+`", "version": "`+version+`"}}`, tunnelCookie),
-			wantErr:     "use_tunnel_for_fis enabled but FIS_TUNNEL_URL not configured",
+			name:        "actAsProxy false — tunnel skipped even with the cookie set",
+			configFile:  "fis_caller_no_proxy.yaml",
+			endpoint:    "confirm",
+			setupTunnel: true,
+			body:        bodyWithBPP,
+			cookies:     []*http.Cookie{tunnelCookie},
+			wantURL:     bppURI + "/confirm",
+		},
+		{
+			name:         "use_gateway wins over the tunnel for search",
+			configFile:   "fis_caller.yaml",
+			endpoint:     "search",
+			setupTunnel:  true,
+			setupGateway: true,
+			body:         bodyWithoutBPP,
+			cookies:      []*http.Cookie{gatewayCookie, tunnelCookie},
+			wantURL:      gatewayURL + "/search",
 		},
 	}
 
@@ -935,12 +977,22 @@ func TestFISTunnelRouting(t *testing.T) {
 			} else {
 				t.Setenv("FIS_TUNNEL_URL", "")
 			}
+			if tt.setupGateway {
+				t.Setenv("GATEWAY_URL", gatewayURL)
+			} else {
+				t.Setenv("GATEWAY_URL", "")
+			}
 
-			router, _, rulesFilePath := setupRouter(t, "bap_caller.yaml")
+			router, _, rulesFilePath := setupRouter(t, tt.configFile)
 			defer os.RemoveAll(filepath.Dir(rulesFilePath))
 
-			parsedURL, _ := url.Parse("https://gateway.example.com/confirm")
-			route, err := router.Route(ctx, parsedURL, []byte(tt.body), tt.request)
+			parsedURL, err := url.Parse("https://workbench.example.com/" + tt.endpoint)
+			if err != nil {
+				t.Fatalf("url.Parse() err = %v, want nil", err)
+			}
+			request := makeRequest(tt.endpoint, tt.body, tt.cookies...)
+
+			route, err := router.Route(ctx, parsedURL, []byte(tt.body), request)
 
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
@@ -955,10 +1007,9 @@ func TestFISTunnelRouting(t *testing.T) {
 			if route == nil || route.URL == nil {
 				t.Fatalf("Route() returned nil route or nil URL")
 			}
-			if gotURL := route.URL.String(); !strings.HasPrefix(gotURL, tt.wantURL) {
-				t.Errorf("Route() URL = %q, want prefix %q", gotURL, tt.wantURL)
+			if gotURL := route.URL.String(); gotURL != tt.wantURL {
+				t.Errorf("Route() URL = %q, want %q", gotURL, tt.wantURL)
 			}
 		})
 	}
 }
-

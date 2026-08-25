@@ -1,0 +1,11 @@
+routingRules:
+  - domain: ONDC:FIS12
+    version: 2.0.0
+    targetType: bpp
+    actAsProxy: false
+    endpoints:
+      - search
+      - select
+      - init
+      - confirm
+      - status
