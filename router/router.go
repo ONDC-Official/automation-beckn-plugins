@@ -363,18 +363,26 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte, request *
 
 	// useTunnelForFis override: route to FIS_TUNNEL_URL when the session has it
 	// enabled AND the matched route acts as a proxy.
+	// If bpp_uri is present in the request body, send directly to the NP instead
+	// of routing through the tunnel.
 	if request != nil && route.ActAsProxy {
 		if c, err := request.Cookie("use_tunnel_for_fis"); err == nil && c.Value == "true" {
-			if r.fisTunnelURL == nil {
-				return nil, fmt.Errorf("use_tunnel_for_fis enabled but FIS_TUNNEL_URL not configured")
+			if strings.TrimSpace(requestBody.Context.BPPURI) != "" {
+				// bpp_uri is present — route directly to NP, skip the tunnel
+				return handleProtocolMapping(route, requestBody.Context.BPPURI, endpoint)
+			} else {
+				// No bpp_uri — route through FIS tunnel
+				if r.fisTunnelURL == nil {
+					return nil, fmt.Errorf("use_tunnel_for_fis enabled but FIS_TUNNEL_URL not configured")
+				}
+				target := *r.fisTunnelURL
+				target.Path = joinPath(&target, endpoint)
+				return &model.Route{
+					TargetType: targetTypeURL,
+					URL:        &target,
+					ActAsProxy: true,
+				}, nil
 			}
-			target := *r.fisTunnelURL
-			target.Path = joinPath(&target, endpoint)
-			return &model.Route{
-				TargetType: targetTypeURL,
-				URL:        &target,
-				ActAsProxy: true,
-			}, nil
 		}
 	}
 
@@ -385,7 +393,6 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte, request *
 	case targetTypeBAP:
 		return handleProtocolMapping(route, requestBody.Context.BAPURI, endpoint)
 	case targetTypeJSONPath:
-		// Extract URL using JSONPath
 		value, err := GetValueFromRequest(request, route.JsonPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract URL using JSONPath '%s': %w", route.JsonPath, err)
