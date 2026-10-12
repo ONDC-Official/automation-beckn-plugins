@@ -93,7 +93,7 @@ func getNackErrorPayload(message string) map[string]any {
 		},
 		"error": map[string]any{
 			"code":    "20009",
-			"message": message,
+			"message": payloadutils.WithWorkbenchPrefix(message),
 		},
 	}
 }

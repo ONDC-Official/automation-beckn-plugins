@@ -3,6 +3,7 @@ package payloadutils
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 
@@ -118,20 +119,50 @@ func GetRequestData(payload apiservice.PayloadEnvelope, moduleType apiservice.Mo
 	return owner, subscriberURI, subscriberID,string(moduleRole), nil
 }
 
+// WorkbenchErrorPrefix tags every NACK/error message sent by the workbench so the
+// receiver can tell it apart from errors raised by other components.
+const WorkbenchErrorPrefix = "[FROM ONIX WORKBENCH]"
+
+// WithWorkbenchPrefix prepends WorkbenchErrorPrefix to msg, unless it is already there.
+func WithWorkbenchPrefix(msg string) string {
+	if strings.HasPrefix(msg, WorkbenchErrorPrefix) {
+		return msg
+	}
+	return WorkbenchErrorPrefix + " " + msg
+}
+
 func NewBadRequestNackError(msg string,ondcContext any) error {
-	return model.NewWorkbenchErr("BAD_REQUEST",msg, "NACK",ondcContext)
+	return model.NewWorkbenchErr("BAD_REQUEST",WithWorkbenchPrefix(msg), "NACK",ondcContext)
 }
 
 func NewInternalServerNackError(msg string, ondcContext any) error {
-	return model.NewWorkbenchErr("INTERNAL", msg, "NACK", ondcContext)
+	return model.NewWorkbenchErr("INTERNAL", WithWorkbenchPrefix(msg), "NACK", ondcContext)
 }
 
 func NewBadRequestHTTPError(msg string) error {
-	return model.NewWorkbenchErr("BAD_REQUEST",msg, "HTTP",nil)
+	return model.NewWorkbenchErr("BAD_REQUEST",WithWorkbenchPrefix(msg), "HTTP",nil)
 }
 
 func NewPreconditionFailedHTTPError(msg string) error {
-	return model.NewWorkbenchErr("PRECONDITION_FAILED",msg, "HTTP",nil)
+	return model.NewWorkbenchErr("PRECONDITION_FAILED",WithWorkbenchPrefix(msg), "HTTP",nil)
+}
+
+func NewInternalServerHTTPError(msg string) error {
+	return model.NewWorkbenchErr("INTERNAL", WithWorkbenchPrefix(msg), "HTTP", nil)
+}
+
+// AsWorkbenchError returns err unchanged if it is already a workbench error, otherwise
+// wraps it as a prefixed 500. Without this, onix replaces plain errors with its own
+// generic "Internal server error" message, which carries no workbench identifier.
+func AsWorkbenchError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var workbenchErr *model.WorkbenchErr
+	if errors.As(err, &workbenchErr) {
+		return err
+	}
+	return NewInternalServerHTTPError(err.Error())
 }
 
 func NewAckObject(ondcContext any) map[string]any{
