@@ -86,7 +86,11 @@ func New(ctx context.Context, cache definition.Cache, config *Config) (definitio
 	}, nil, nil
 }
 // WorkbenchReceiver
-func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Request,body []byte) (error){
+func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Request, body []byte) error {
+	return payloadutils.AsWorkbenchError(w.receive(ctx, request, body))
+}
+
+func (w *ondcWorkbench) receive(ctx context.Context, request *http.Request,body []byte) (error){
 	payloadEnv,payloadRaw, err := payloadutils.ValidateAndExtractPayload(ctx,body,w.Config.TransactionProperties)
 	if(err != nil){
 		log.Errorf(ctx,err,"payload receive failed")
@@ -152,7 +156,11 @@ func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Req
 }
 
 // WorkbenchValidateContext
-func (w *ondcWorkbench) WorkbenchValidateContext(ctx context.Context,request *http.Request,body []byte) (error){
+func (w *ondcWorkbench) WorkbenchValidateContext(ctx context.Context, request *http.Request, body []byte) error {
+	return payloadutils.AsWorkbenchError(w.validateContext(ctx, request, body))
+}
+
+func (w *ondcWorkbench) validateContext(ctx context.Context,request *http.Request,body []byte) (error){
 	payloadEnv, raw, err := payloadutils.ValidateAndExtractPayload(ctx, body, w.Config.TransactionProperties)
 	if err != nil {
 		log.Errorf(ctx, err, "context validation: failed to parse payload")
