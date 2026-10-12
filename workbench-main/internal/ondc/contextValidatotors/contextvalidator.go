@@ -126,6 +126,14 @@ func (cv *Validator) validateAsyncContext(ctx context.Context, payload apiservic
 	if result := cv.validateSyncPath(ctx, payload, transactionData); !result.Valid {
 		return result
 	}
+	// Requests (search, select, init, ...) start a new exchange, so their message_id
+	// must not appear anywhere in the history. Callbacks on the sync path are skipped
+	// as they legitimately share the message_id of the request they answer.
+	if !strings.HasPrefix(subjectAction, "on_") {
+		if result := validateUniqueMessageId(ctx, payload.Context.MessageID, sortedContexts, nil); !result.Valid {
+			return result
+		}
+	}
 
 	return cv.validateTransactionId(ctx, subjectAction, sortedContexts)
 }
@@ -152,18 +160,23 @@ func (cv *Validator) validateAsyncPath(ctx context.Context, payload apiservice.P
 	}
 
 	// Duplicate message_id check excluding the predecessor entry.
+	return validateUniqueMessageId(ctx, payload.Context.MessageID, sortedContexts, predecessor)
+}
+
+// validateUniqueMessageId fails if messageID already appears in the transaction history.
+// The exclude entry, when non-nil, is skipped (the async predecessor shares the message_id).
+func validateUniqueMessageId(ctx context.Context, messageID string, sortedContexts []cache.ApiData, exclude *cache.ApiData) contextValidationResult {
 	for i := range sortedContexts {
 		c := sortedContexts[i]
-		if c.Action == predecessor.Action && c.MessageId == predecessor.MessageId && c.Timestamp == predecessor.Timestamp {
+		if exclude != nil && c.Action == exclude.Action && c.MessageId == exclude.MessageId && c.Timestamp == exclude.Timestamp {
 			continue
 		}
-		if c.MessageId == payload.Context.MessageID {
-			msg := fmt.Sprintf("Duplicate message_id found in the transaction history, %s", payload.Context.MessageID)
+		if c.MessageId == messageID {
+			msg := fmt.Sprintf("Duplicate message_id found in the transaction history, %s", messageID)
 			log.Warnf(ctx, "%s", msg)
 			return contextValidationResult{Valid: false, Error: msg, ForwardRequest: false}
 		}
 	}
-
 	return contextValidationResult{Valid: true, ForwardRequest: true}
 }
 
