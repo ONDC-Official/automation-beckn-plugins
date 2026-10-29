@@ -176,3 +176,72 @@ func TestBecknAckUnchanged(t *testing.T) {
 		})
 	}
 }
+
+// A session whose difficulty switches header and protocol validation off.
+const lenientSession = `{"transactionIds":[],"flowMap":{},"usecaseId":"U1",` +
+	`"sessionDifficulty":{"protocolValidations":false,"headerValidaton":false,"useGzip":false}}`
+
+func receiveCookies(t *testing.T, wb *ondcWorkbench, req *http.Request, body []byte) map[string]string {
+	t.Helper()
+	if err := wb.WorkbenchReceiver(context.Background(), req, body); err != nil {
+		t.Fatalf("WorkbenchReceiver() error = %v", err)
+	}
+	first := map[string]string{}
+	for _, c := range req.Cookies() {
+		if _, seen := first[c.Name]; !seen {
+			first[c.Name] = c.Value // what http.Request.Cookie, and so ONIX, reads
+		}
+	}
+	return first
+}
+
+func TestFDForcesValidationCookies(t *testing.T) {
+	fdBody := func(t *testing.T) []byte {
+		return contextBody(t,
+			map[string]any{"domain": "ONDC:FIS14:FD", "version": "0.1.4", "action": "application_create"},
+			map[string]any{"fdEnvelope": map[string]any{"envelopeVersion": "1.0"}})
+	}
+
+	t.Run("mock module, new transaction", func(t *testing.T) {
+		wb, cache := newTestWorkbench(t, "ONDC:FIS14:FD", "0.1.4", "caller", fdPropertiesYAML)
+		cache.m["s1"] = lenientSession
+		req := httptest.NewRequest(http.MethodPost, "/mock/application_create?flow_id=f1&session_id=s1", nil)
+		req.AddCookie(&http.Cookie{Name: "header_validation", Value: "false"}) // sent by the caller
+		got := receiveCookies(t, wb, req, fdBody(t))
+		if got["header_validation"] != "true" || got["protocol_validation"] != "true" {
+			t.Fatalf("header_validation=%q protocol_validation=%q, want both true", got["header_validation"], got["protocol_validation"])
+		}
+		if got["session_id"] != "s1" || got["flow_id"] != "f1" || got["subscriber_url"] != testSubscriberURL || got["use_gzip"] != "false" {
+			t.Fatalf("the other cookies must survive unchanged, got %v", got)
+		}
+		for _, c := range req.Cookies() {
+			if (c.Name == "header_validation" || c.Name == "protocol_validation") && c.Value != "true" {
+				t.Fatalf("a %s=%s cookie is left on the request", c.Name, c.Value)
+			}
+		}
+	})
+
+	t.Run("NP module, existing transaction", func(t *testing.T) {
+		wb, cache := newTestWorkbench(t, "ONDC:FIS14:FD", "0.1.4", "receiver", fdPropertiesYAML)
+		cache.m["s1"] = lenientSession
+		// moduleRole BAP receives at bap_uri.
+		cache.m[wb.TransactionCache.CreateTransactionKey(testTxnID, "https://wb.example/investor-app")] =
+			`{"sessionId":"s1","flowId":"f1","latestAction":"","latestTimestamp":"1970-01-01T00:00:00Z","apiList":[]}`
+		req := httptest.NewRequest(http.MethodPost, "/investor-app/application_create", nil)
+		got := receiveCookies(t, wb, req, fdBody(t))
+		if got["header_validation"] != "true" || got["protocol_validation"] != "true" {
+			t.Fatalf("header_validation=%q protocol_validation=%q, want both true", got["header_validation"], got["protocol_validation"])
+		}
+	})
+}
+
+// Beckn sessions keep their difficulty.
+func TestBecknValidationCookiesUnchanged(t *testing.T) {
+	wb, cache := newTestWorkbench(t, "ONDC:RET10", "1.2.5", "caller", becknPropertiesYAML)
+	cache.m["s1"] = lenientSession
+	req := httptest.NewRequest(http.MethodPost, "/mock/search?flow_id=f1&session_id=s1", nil)
+	got := receiveCookies(t, wb, req, contextBody(t, map[string]any{"domain": "ONDC:RET10", "core_version": "1.2.5", "action": "search"}, nil))
+	if got["header_validation"] != "false" || got["protocol_validation"] != "false" {
+		t.Fatalf("header_validation=%q protocol_validation=%q, want the session's false", got["header_validation"], got["protocol_validation"])
+	}
+}

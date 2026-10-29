@@ -88,6 +88,9 @@ func New(ctx context.Context, cache definition.Cache, config *Config) (definitio
 
 // WorkbenchReceiver
 func (w *ondcWorkbench) WorkbenchReceiver(ctx context.Context, request *http.Request, body []byte) error {
+	if isFD(w.Config) {
+		return payloadutils.AsWorkbenchError(w.receiveFD(ctx, request, body))
+	}
 	return payloadutils.AsWorkbenchError(w.receive(ctx, request, body))
 }
 
