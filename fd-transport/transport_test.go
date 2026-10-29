@@ -532,3 +532,23 @@ type errRT struct{}
 func (errRT) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, errors.New("dial tcp: refused")
 }
+
+// The entrypoint points the workbench at the mock with MOCK_SERVER_URL, which can name another
+// host than the build-time internalHosts; that host must stay internal (headers kept, no signing).
+func TestParseConfigMockServerURLIsInternal(t *testing.T) {
+	c, err := parseConfig(map[string]any{"routeTable": writeTable(t), "internalHosts": "playground-mock-service:3000"},
+		envOf(map[string]string{"MOCK_SERVER_URL": "http://mock:3000/mock"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"playground-mock-service:3000", "mock:3000"}; !reflect.DeepEqual(c.InternalHosts, want) {
+		t.Fatalf("InternalHosts = %v, want %v", c.InternalHosts, want)
+	}
+	w, err := New(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.IsInternal("http", "mock:3000") {
+		t.Fatal("mock:3000 should be internal")
+	}
+}

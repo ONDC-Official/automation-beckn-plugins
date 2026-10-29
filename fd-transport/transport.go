@@ -50,6 +50,9 @@ const (
 	CodeSigningDisabled = "FD-PWB-0034" // SIGNING_UNAVAILABLE (HTTP 500): no signing key configured, or signing failed
 )
 
+// EnvMockServerURL is the mock service URL the container entrypoint uses; its host is internal.
+const EnvMockServerURL = "MOCK_SERVER_URL"
+
 // SignedHeaders is the header list fd-transport signs.
 var SignedHeaders = []string{fdsig.PseudoCreated, fdsig.PseudoExpires, fdsig.HeaderDigest, fdsig.PseudoRequestTarget}
 
@@ -87,6 +90,15 @@ func parseConfig(cfg map[string]any, getenv func(string) string) (*Config, error
 	var err error
 	if c.InternalHosts, err = stringList(cfg, "internalHosts"); err != nil {
 		return nil, err
+	}
+	// The mock service's address is rewritten at container start (MOCK_SERVER_URL, as for
+	// the workbench plugin) and can differ from the build-time host in internalHosts. Calls to
+	// it are internal: they keep the X-Pwb-* headers the playground reads and are not
+	// rendered or signed.
+	if raw := strings.TrimSpace(getenv(EnvMockServerURL)); raw != "" {
+		if u, err := url.Parse(raw); err == nil && u.Host != "" {
+			c.InternalHosts = append(c.InternalHosts, u.Host)
+		}
 	}
 	if c.AllowedHosts, err = stringList(cfg, "allowedHosts"); err != nil {
 		return nil, err
