@@ -18,8 +18,9 @@ const (
 	CodeMessageIDReused     = "FD-PWB-0004" // MESSAGE_ID_REUSED
 	CodeObjectUnknown       = "FD-PWB-0005" // OBJECT_UNKNOWN
 	CodeBodyTooLarge        = "FD-PWB-0006" // BODY_TOO_LARGE (HTTP 413)
-	CodeInternalKeyInvalid  = "FD-PWB-0007" // INTERNAL_KEY_INVALID (mock mode, HTTP 403)
+	CodeExpectationExpired  = "FD-PWB-0007" // EXPECTATION_EXPIRED (workbench-main's inner code)
 	CodePathParamsInvalid   = "FD-PWB-0008" // PATH_PARAMS_INVALID (mock mode, HTTP 400)
+	CodeInternalKeyInvalid  = "FD-PWB-0009" // INTERNAL_KEY_INVALID (mock mode, HTTP 403)
 	CodeSignatureMissing    = "FD-PWB-0010" // SIGNATURE_MISSING
 	CodeRequestTargetNotSig = "FD-PWB-0011" // REQUEST_TARGET_NOT_SIGNED
 	CodeSignatureExpired    = "FD-PWB-0012" // SIGNATURE_EXPIRED
@@ -46,6 +47,7 @@ var codeNames = map[string]string{
 	CodeMessageIDReused:     "MESSAGE_ID_REUSED",
 	CodeObjectUnknown:       "OBJECT_UNKNOWN",
 	CodeBodyTooLarge:        "BODY_TOO_LARGE",
+	CodeExpectationExpired:  "EXPECTATION_EXPIRED",
 	CodeInternalKeyInvalid:  "INTERNAL_KEY_INVALID",
 	CodePathParamsInvalid:   "PATH_PARAMS_INVALID",
 	CodeSignatureMissing:    "SIGNATURE_MISSING",
@@ -65,6 +67,13 @@ var codeNames = map[string]string{
 	CodeContextInvalid:      "CONTEXT_INVALID",
 	CodeWorkbenchRejected:   "WORKBENCH_REJECTED",
 	CodeCounterpartyFailed:  "COUNTERPARTY_FAILED",
+}
+
+// innerCodes maps the named error codes of workbench-main's NACKs to their FD-PWB codes.
+// Any other inner NACK is WORKBENCH_REJECTED (or INTERNAL on a 5xx).
+var innerCodes = map[string]string{
+	"MESSAGE_ID_REUSED":   CodeMessageIDReused,
+	"EXPECTATION_EXPIRED": CodeExpectationExpired,
 }
 
 // CodeName returns the symbolic name of an FD-PWB code ("" if unknown).

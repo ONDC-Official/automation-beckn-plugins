@@ -348,6 +348,8 @@ func TestNPInnerNack(t *testing.T) {
 		{"schema NACK, HTTP 200", 200, becknNACK, CodeWorkbenchRejected, true},
 		{"workbench NACK, HTTP 400", 400, becknNACK, CodeWorkbenchRejected, true},
 		{"sign NACK, HTTP 401", 401, becknNACK, CodeWorkbenchRejected, true},
+		{"inner MESSAGE_ID_REUSED", 200, `{"message":{"ack":{"status":"NACK"}},"error":{"code":"MESSAGE_ID_REUSED","message":"[FROM ONIX WORKBENCH] message_id m-1 was already used"}}`, CodeMessageIDReused, true},
+		{"inner EXPECTATION_EXPIRED", 400, `{"message":{"ack":{"status":"NACK"}},"error":{"code":"EXPECTATION_EXPIRED","message":"[FROM ONIX WORKBENCH] on_application_confirm was expected until 05:59"}}`, CodeExpectationExpired, true},
 		{"internal NACK, HTTP 500", 500, `{"message":{"ack":{"status":"NACK"}},"error":{"code":"Internal Server Error","message":"Internal server error, MessageID: m-1"}}`, CodeInternal, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -358,8 +360,17 @@ func TestNPInnerNack(t *testing.T) {
 			if !bytes.Equal(b.Context, peekContext(body)) {
 				t.Fatalf("context not echoed: %s", b.Context)
 			}
-			if tt.code == CodeWorkbenchRejected {
+			switch tt.code {
+			case CodeWorkbenchRejected:
 				if b.Error.Message != "WORKBENCH_REJECTED: 30000: [FROM ONIX WORKBENCH] confirm must be an object" || b.Error.FieldPath != "/message/confirm" {
+					t.Fatalf("error = %+v", b.Error)
+				}
+			case CodeMessageIDReused:
+				if b.Error.Message != "MESSAGE_ID_REUSED: MESSAGE_ID_REUSED: [FROM ONIX WORKBENCH] message_id m-1 was already used" || b.Error.FieldPath != "/context/message_id" {
+					t.Fatalf("error = %+v", b.Error)
+				}
+			case CodeExpectationExpired:
+				if b.Error.Message != "EXPECTATION_EXPIRED: EXPECTATION_EXPIRED: [FROM ONIX WORKBENCH] on_application_confirm was expected until 05:59" {
 					t.Fatalf("error = %+v", b.Error)
 				}
 			}

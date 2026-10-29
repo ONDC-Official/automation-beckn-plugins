@@ -61,7 +61,8 @@ type innerAck struct {
 
 // shapeNP turns the inner chain's response into the participant's (§3 np step 8):
 // an ACK becomes 202 (asynchronous request) or 200 (callback, webhook) with the request's
-// context echoed; a Beckn NACK becomes a 200 FD Error; a proxy failure becomes
+// context echoed; a Beckn NACK becomes a 200 FD Error (a named inner code keeps its own
+// FD-PWB code, see innerCodes; the inner code and message stay verbatim); a proxy failure becomes
 // COUNTERPARTY_FAILED; a SYNC answer passes through.
 func (g *Gate) shapeNP(route *fdroute.Route, reqCtx json.RawMessage, bw *bufferWriter, obliged string) *response {
 	status, body := bw.status, bw.body.Bytes()
@@ -103,10 +104,17 @@ func (g *Gate) shapeNP(route *fdroute.Route, reqCtx json.RawMessage, bw *bufferW
 		if be.Code == "" {
 			detail = be.Message
 		}
-		if status >= 500 {
-			return nack(reject(CodeInternal, pathToPointer(be.Paths), "%s", detail), false)
+		fieldPath := pathToPointer(be.Paths)
+		if code, ok := innerCodes[strings.TrimSpace(be.Code)]; ok {
+			if code == CodeMessageIDReused && fieldPath == "" {
+				fieldPath = "/context/message_id"
+			}
+			return nack(reject(code, fieldPath, "%s", detail), true)
 		}
-		return nack(reject(CodeWorkbenchRejected, pathToPointer(be.Paths), "%s", detail), true)
+		if status >= 500 {
+			return nack(reject(CodeInternal, fieldPath, "%s", detail), false)
+		}
+		return nack(reject(CodeWorkbenchRejected, fieldPath, "%s", detail), true)
 
 	case fdwire.StatusACK:
 		h := cleanHeader(bw.header, true)
