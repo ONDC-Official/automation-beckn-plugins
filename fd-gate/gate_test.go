@@ -130,7 +130,7 @@ func TestUnknownRoute(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	want := `{"message":{"ack":{"status":"NACK"}},"error":{"code":"FD-PWB-ROUTE-NOT-FOUND","class":"PROTOCOL","message":"no FD 0.1.4 route for POST /nope","obligedParty":"N-01","retryable":false}}`
+	want := `{"message":{"ack":{"status":"NACK"}},"error":{"code":"FD-PWB-0001","class":"PROTOCOL","message":"no FD 0.1.4 route for POST /nope","obligedParty":"N-01","retryable":false}}`
 	if rec.Body.String() != want {
 		t.Fatalf("body:\n got %s\nwant %s", rec.Body.String(), want)
 	}

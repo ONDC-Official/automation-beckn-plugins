@@ -31,11 +31,12 @@ const (
 	ModeStandalone Mode = "standalone" // no participant behind it
 )
 
-// Error codes fd-gate answers with.
+// Error codes fd-gate answers with. The FD catalogue has none for faults at the workbench's
+// own edge, so these follow the spec's code pattern (^FD-[A-Z]+-[0-9]{4}$) under PWB.
 const (
-	CodeRouteNotFound  = "FD-PWB-ROUTE-NOT-FOUND"
-	CodeNotImplemented = "FD-PWB-NOT-IMPLEMENTED"
-	CodeInternal       = "FD-PWB-INTERNAL"
+	CodeRouteNotFound  = "FD-PWB-0001" // ROUTE_NOT_FOUND
+	CodeNotImplemented = "FD-PWB-0002" // NOT_IMPLEMENTED
+	CodeInternal       = "FD-PWB-0003" // INTERNAL
 )
 
 // Config is fd-gate's configuration.
