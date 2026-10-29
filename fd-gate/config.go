@@ -70,6 +70,7 @@ type Config struct {
 	ReplayTTL      time.Duration // replayTTL (default 24h)
 	ObjectTTL      time.Duration // objectTTL (default 168h): lifetime of the FD_OBJ index entries
 	MaxBodyBytes   int64         // maxBodyBytes (default 8 MiB)
+	RecorderTarget string        // recorderTarget: the recorder's gRPC address for edge events; default env RECORDER_SERVICE_GRPC_URL ("" = not recorded)
 
 	// From the environment only.
 	InternalKey       string // PWB_INTERNAL_KEY: the playground's key on mock calls ("" = not checked)
@@ -168,6 +169,10 @@ func parseConfig(cfg map[string]string, getenv func(string) string) (*Config, er
 			return nil, fmt.Errorf("fd-gate: invalid maxBodyBytes %q", raw)
 		}
 		c.MaxBodyBytes = v
+	}
+
+	if c.RecorderTarget = get("recorderTarget"); c.RecorderTarget == "" {
+		c.RecorderTarget = env(EnvRecorderGRPC)
 	}
 
 	c.InternalKey = getenv(EnvInternalKey)

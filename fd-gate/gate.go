@@ -41,6 +41,7 @@ type Deps struct {
 	Store    Store            // required in np and mock modes
 	Keys     KeyLookup        // required in np mode when signatures are required
 	Notifier Notifier         // optional: replay notices are skipped without one
+	Auditor  Auditor          // optional: edge events go unrecorded without one
 	Now      func() time.Time // optional: defaults to time.Now
 }
 
@@ -52,6 +53,7 @@ type Gate struct {
 	store        Store
 	keys         KeyLookup
 	notifier     Notifier
+	auditor      Auditor
 	now          func() time.Time
 	replayWait   time.Duration
 	defaultParty string // obligedParty when no route resolves
@@ -67,6 +69,9 @@ func New(ctx context.Context, cfg map[string]string) (func(http.Handler) http.Ha
 	var d Deps
 	if c.Mode != ModeStandalone {
 		d.Store = NewRedisStore(c.Addr, c.RedisUsername, c.RedisPassword)
+	}
+	if c.Mode == ModeNP && c.RecorderTarget != "" {
+		d.Auditor = NewGRPCAuditor(c.RecorderTarget)
 	}
 	if c.Mode == ModeNP && c.Signature == SignatureRequired {
 		d.Keys = NewCachedLookup(&RegistryLookup{
@@ -113,7 +118,7 @@ func NewGate(c *Config, d Deps) (*Gate, error) {
 		c.MaxBodyBytes = DefaultMaxBodyBytes
 	}
 	g := &Gate{
-		cfg: c, table: table, store: d.Store, keys: d.Keys, notifier: d.Notifier,
+		cfg: c, table: table, store: d.Store, keys: d.Keys, notifier: d.Notifier, auditor: d.Auditor,
 		now: d.Now, replayWait: ReplayWait, defaultParty: fdwire.Party(fdroute.RoleInvestorApp),
 	}
 	if g.now == nil {
@@ -222,6 +227,8 @@ func (g *Gate) serveNP(w http.ResponseWriter, r *http.Request, next http.Handler
 		r.Body.Close() // a read has no body; its digest covers no bytes
 	}
 	echo := peekContext(body)
+	// What fd-gate answers itself is recorded too (network-observability runs inside it).
+	edge := EdgeEvent{Route: route, Method: r.Method, Path: edgePath(path, r), Body: body}
 
 	var signer, ukid string
 	if g.cfg.Signature == SignatureRequired {
@@ -229,8 +236,10 @@ func (g *Gate) serveNP(w http.ResponseWriter, r *http.Request, next http.Handler
 		if gerr != nil {
 			if isGet {
 				echo = mustJSON(g.newReadContext(route, "", nil))
+				writeNack(w, echo, obliged, gerr)
+				return
 			}
-			writeNack(w, echo, obliged, gerr)
+			g.refuse(w, edge, echo, obliged, gerr)
 			return
 		}
 		signer, ukid = auth.SubscriberID, auth.UniqueKeyID
@@ -248,19 +257,19 @@ func (g *Gate) serveNP(w http.ResponseWriter, r *http.Request, next http.Handler
 	} else {
 		var gerr *gateError
 		if fb, gerr = parseFDBody(body); gerr != nil {
-			writeNack(w, echo, obliged, gerr)
+			g.refuse(w, edge, echo, obliged, gerr)
 			return
 		}
 		if signer != "" {
 			if gerr := checkSigner(route, fb, signer); gerr != nil {
-				writeNack(w, echo, obliged, gerr)
+				g.refuse(w, edge, echo, obliged, gerr)
 				return
 			}
 		} else {
 			signer, _ = senderID(route, fb)
 		}
 		if gerr := g.checkTransportRules(route, params, fb); gerr != nil {
-			writeNack(w, echo, obliged, gerr)
+			g.refuse(w, edge, echo, obliged, gerr)
 			return
 		}
 		internal = body
@@ -277,12 +286,14 @@ func (g *Gate) serveNP(w http.ResponseWriter, r *http.Request, next http.Handler
 		}
 		switch outcome {
 		case replayConflict:
-			writeNack(w, echo, obliged, reject(CodeMessageIDReused, "/context/message_id",
+			g.refuse(w, edge, echo, obliged, reject(CodeMessageIDReused, "/context/message_id",
 				"message_id %s was already used for a different %s from %s; a retry must resend the identical body",
 				fb.str("message_id"), route.Action, signer))
 			return
 		case replayStored, replayAwaited:
 			g.writeRecord(w, rec)
+			edge.Kind, edge.Status, edge.Response = EdgeReplay, rec.Status, []byte(rec.Body)
+			g.audit(ctx, edge)
 			if outcome == replayStored && isAsyncRequest(route) && rec.Status == http.StatusAccepted {
 				g.notifyReplay(ctx, ReplayNotice{
 					Domain: g.table.Domain, Version: g.table.Version, Action: route.Action,
@@ -458,6 +469,15 @@ func (g *Gate) writeRecord(w http.ResponseWriter, rec *replayRecord) {
 		h.Set(k, v)
 	}
 	writeBody(w, rec.Status, h, []byte(rec.Body))
+}
+
+// edgePath is the REST path as received, without the module prefix, with any query: the
+// value X-Pwb-Fd-Path carries.
+func edgePath(path string, r *http.Request) string {
+	if r.URL.RawQuery != "" {
+		return path + "?" + r.URL.RawQuery
+	}
+	return path
 }
 
 // readBody reads a POST body up to maxBodyBytes.
