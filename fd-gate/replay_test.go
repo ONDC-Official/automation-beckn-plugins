@@ -277,3 +277,24 @@ func TestReplayWithoutNotifier(t *testing.T) {
 		t.Fatalf("%d calls=%d", rec.Code, in.calls.Load())
 	}
 }
+
+// An asynchronous request reaches the playground with its body alone (ONIX forwards no
+// headers), so its path parameters are left in the store, under its transaction and message.
+func TestNPRecordsPathParamsForThePlayground(t *testing.T) {
+	tg := newNPGate(t)
+	in := ackInner()
+	cw := newMsg("consent_withdraw", "INVESTOR_APP", "m-path", nil)
+	rec := tg.serve(in, npRequest(t, "POST", prefix+"/consents/CNS-4/withdraw", cw.bytes(t), signOpts{}))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	data, ok := tg.store.get(PathParamsKey(domain, transactionID, "m-path"))
+	if !ok || string(data) != `{"consentId":"CNS-4"}` {
+		t.Fatalf("path params = %q, %v", data, ok)
+	}
+	// A request with no path parameters leaves nothing.
+	tg.serve(in, npRequest(t, "POST", prefix+"/applications", newMsg("application_create", "INVESTOR_APP", "m-nopath", nil).bytes(t), signOpts{}))
+	if _, ok := tg.store.get(PathParamsKey(domain, transactionID, "m-nopath")); ok {
+		t.Fatal("recorded empty path parameters")
+	}
+}

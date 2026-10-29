@@ -90,6 +90,35 @@ func ReplayKey(domain, signer, action, messageID string) string {
 	return "FD_REPLAY::" + domain + "::" + signer + "::" + action + "::" + messageID
 }
 
+// PathParamsKey is where np mode leaves a participant's request's path parameters for the
+// playground: FD_PATH_PARAMS::<domain>::<transaction_id>::<message_id>.
+func PathParamsKey(domain, transactionID, messageID string) string {
+	return "FD_PATH_PARAMS::" + domain + "::" + transactionID + "::" + messageID
+}
+
+// recordPathParams leaves the path parameters of a participant's POST where the playground
+// finds them. ONIX forwards an asynchronous request to the mock with its body alone, so
+// X-Pwb-Fd-Path-Params never reaches it, and a path parameter that is not a Correlation
+// member — consent_withdraw's consentId, the only way that request names its consent — would
+// be lost. Kept as long as the replay record. Failures are logged, never fatal.
+func (g *Gate) recordPathParams(ctx context.Context, params map[string]string, b *fdBody) {
+	if g.store == nil || b == nil || len(params) == 0 {
+		return
+	}
+	transactionID, messageID := b.str("transaction_id"), b.str("message_id")
+	if transactionID == "" || messageID == "" {
+		return
+	}
+	value, err := json.Marshal(params)
+	if err != nil {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	if err := g.store.Set(ctx, PathParamsKey(g.table.Domain, transactionID, messageID), value, g.cfg.ReplayTTL); err != nil {
+		log.Errorf(ctx, err, "fd-gate: cannot record the path parameters of %s", messageID)
+	}
+}
+
 // indexBody records every string identifier in the body's fdEnvelope.correlation against
 // the body's context. Failures are logged, never fatal: the index only serves later GETs.
 func (g *Gate) indexBody(ctx context.Context, b *fdBody) {

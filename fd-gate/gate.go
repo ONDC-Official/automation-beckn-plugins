@@ -306,6 +306,7 @@ func (g *Gate) serveNP(w http.ResponseWriter, r *http.Request, next http.Handler
 		claim = c
 		defer claim.release(ctx) // a no-op once finished; frees the key on a panic
 		g.indexBody(ctx, fb)
+		g.recordPathParams(ctx, params, fb)
 	}
 
 	fdPath := path
