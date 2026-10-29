@@ -485,7 +485,7 @@ func TestNPGetRead(t *testing.T) {
 	if !reflect.DeepEqual(c, wantCtx) {
 		t.Fatalf("context\n got %v\nwant %v", c, wantCtx)
 	}
-	wantEnv := map[string]any{"envelopeVersion": "1.0", "payloadVersion": version, "mode": "SYNC", "originatorRole": "INVESTOR_APP",
+	wantEnv := map[string]any{"envelopeVersion": "1.0", "payloadVersion": "1.0", "mode": "SYNC", "originatorRole": "INVESTOR_APP",
 		"correlation": map[string]any{"depositId": "D/1"}}
 	if !reflect.DeepEqual(b.FdEnvelope, wantEnv) {
 		t.Fatalf("envelope %v", b.FdEnvelope)

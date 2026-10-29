@@ -13,6 +13,14 @@ import (
 	"github.com/ONDC-Official/automation-beckn-plugins/pkg/fdroute"
 )
 
+// Envelope versions fd-gate writes on a GET's internal body. PayloadVersion is the spec's
+// x-fd-payload-version (fd-protocol 28394cb), which versions the deposit product schema
+// separately from context.version; the route table does not carry it.
+const (
+	EnvelopeVersion = "1.0"
+	PayloadVersion  = "1.0"
+)
+
 // readContext is the context fd-gate writes for a GET read, which has no body of its own.
 type readContext struct {
 	Domain   string `json:"domain"`
@@ -124,7 +132,7 @@ func (g *Gate) buildReadBody(ctx context.Context, route *fdroute.Route, params m
 	body := readBody{
 		Context: rc,
 		FdEnvelope: readEnvelope{
-			EnvelopeVersion: "1.0", PayloadVersion: g.table.Version, Mode: route.Mode,
+			EnvelopeVersion: EnvelopeVersion, PayloadVersion: PayloadVersion, Mode: route.Mode,
 			OriginatorRole: route.Caller, Correlation: pp,
 		},
 		Message: readMessage{PathParams: pp, Query: q},
