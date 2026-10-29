@@ -48,8 +48,21 @@ func TestReplaySameBodyServesStoredResponse(t *testing.T) {
 		t.Fatalf("calls=%d notices=%d", in.calls.Load(), tg.notifier.count())
 	}
 
+	// The pending marker is short-lived; the stored response lives for replayTTL.
+	key := ReplayKey(domain, appID, "application_confirm", "m-replay")
+	tg.store.mu.Lock()
+	ttls := append([]time.Duration(nil), tg.store.ttls[key]...)
+	tg.store.mu.Unlock()
+	if len(ttls) != 2 || ttls[0] != ReplayPendingTTL || ttls[1] != DefaultReplayTTL {
+		t.Fatalf("replay key TTLs %v", ttls)
+	}
+	// The object index uses objectTTL.
+	if got := tg.store.ttls[ObjectKey(domain, "applicationId", "APP-1")]; len(got) != 1 || got[0] != DefaultObjectTTL {
+		t.Fatalf("index TTLs %v", got)
+	}
+
 	// The stored record has the documented shape.
-	data, _ := tg.store.get(ReplayKey(domain, appID, "application_confirm", "m-replay"))
+	data, _ := tg.store.get(key)
 	var rec map[string]any
 	_ = json.Unmarshal(data, &rec)
 	if rec["bodySha256"] != bodySHA256(body) || rec["status"] != float64(202) || rec["body"] != first.Body.String() ||

@@ -22,6 +22,10 @@ const (
 	ReplayWait = 10 * time.Second
 	// ReplayPoll is how often a waiting duplicate looks again.
 	ReplayPoll = 50 * time.Millisecond
+	// ReplayPendingTTL bounds a pending marker's life, so a workbench that dies mid-request
+	// does not block the message_id for the whole replayTTL. It is well beyond the ONIX
+	// server's 30 s write timeout; the stored response then lives for replayTTL.
+	ReplayPendingTTL = 2 * time.Minute
 )
 
 // replayRecord is the value under a replay key: a pending marker while the first arrival is
@@ -69,7 +73,7 @@ func (g *Gate) replayCheck(ctx context.Context, key string, body []byte) (replay
 	deadline := time.Now().Add(g.replayWait)
 	waited := false
 	for {
-		ok, err := g.store.SetNX(ctx, key, pending, g.cfg.ReplayTTL)
+		ok, err := g.store.SetNX(ctx, key, pending, min(ReplayPendingTTL, g.cfg.ReplayTTL))
 		if err != nil {
 			return 0, nil, nil, fmt.Errorf("replay store: %w", err)
 		}

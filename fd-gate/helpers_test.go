@@ -186,11 +186,14 @@ type memStore struct {
 	gets    atomic.Int32
 	failing error
 	onGet   func(key string, value []byte)
+	ttls    map[string][]time.Duration // every TTL a key was written with, in order
 }
 
-func newMemStore() *memStore { return &memStore{data: map[string][]byte{}} }
+func newMemStore() *memStore {
+	return &memStore{data: map[string][]byte{}, ttls: map[string][]time.Duration{}}
+}
 
-func (s *memStore) SetNX(_ context.Context, key string, value []byte, _ time.Duration) (bool, error) {
+func (s *memStore) SetNX(_ context.Context, key string, value []byte, ttl time.Duration) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.failing != nil {
@@ -200,6 +203,7 @@ func (s *memStore) SetNX(_ context.Context, key string, value []byte, _ time.Dur
 		return false, nil
 	}
 	s.data[key] = append([]byte(nil), value...)
+	s.ttls[key] = append(s.ttls[key], ttl)
 	return true, nil
 }
 
@@ -222,13 +226,14 @@ func (s *memStore) Get(_ context.Context, key string) ([]byte, error) {
 	return append([]byte(nil), v...), nil
 }
 
-func (s *memStore) Set(_ context.Context, key string, value []byte, _ time.Duration) error {
+func (s *memStore) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.failing != nil {
 		return s.failing
 	}
 	s.data[key] = append([]byte(nil), value...)
+	s.ttls[key] = append(s.ttls[key], ttl)
 	return nil
 }
 
