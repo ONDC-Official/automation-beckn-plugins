@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ONDC-Official/automation-beckn-plugins/pkg/fdroute"
@@ -36,18 +37,29 @@ func TestProviderNew(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mw, err := Provider.New(context.Background(), map[string]string{"routeTable": p, "mode": "np"})
+	// The plugin manager passes adapter.yaml's values as strings. Redis is connected lazily,
+	// so no server is needed to build the middleware.
+	mw, err := Provider.New(context.Background(), map[string]string{"routeTable": p, "mode": "np", "addr": "127.0.0.1:1", "requireHTTPS": "true"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
 	mw(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest("GET", "/deposits/D-1", nil))
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d", rec.Code)
+	// An unsigned participant call is refused with an FD NACK at HTTP 200.
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"code":"FD-PWB-0010"`) {
+		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	mw(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest("GET", "/nowhere", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown path: status = %d", rec.Code)
 	}
 
 	if _, err := Provider.New(context.Background(), map[string]string{"mode": "np"}); err == nil {
 		t.Fatal("want error without routeTable")
+	}
+	if _, err := Provider.New(context.Background(), map[string]string{"routeTable": p, "mode": "np"}); err == nil {
+		t.Fatal("want error without addr in np mode")
 	}
 	if _, err := Provider.New(nil, map[string]string{"routeTable": p, "mode": "np"}); err == nil {
 		t.Fatal("want error for nil context")

@@ -1,85 +1,60 @@
-// Package fdgate is the FD (ONDC:FIS14:FD) edge middleware. It sits in front of an FD
-// module's ONIX handler, resolves the REST call (method + path) to an FD route, and — in
-// later milestones — verifies the FD signature, translates the call into the internal
-// POST .../<action> form the existing steps understand and rewrites ACKs.
+// Package fdgate is the FD (ONDC:FIS14:FD) edge middleware. It is the outermost middleware
+// of an FD module's ONIX handler.
 //
-// M1 skeleton: it strips internal and cookie headers, resolves the route and either passes
-// the request on with the resolution on its context (passThrough) or answers 501.
+// In np mode (a participant under test calls the workbench) it strips internal headers and
+// cookies, resolves the REST call (method + path) to an FD route, verifies the FD signature
+// (which covers (request-target)), enforces the transport rules, answers replays from its
+// replay store, translates the call into the internal POST .../<action> form the steps
+// understand, and shapes the inner chain's answer into FD's: 202 + ACK for an accepted
+// asynchronous request, 200 + ACK for a callback or webhook, 200 + NACK with an FD Error for
+// any rejection.
+//
+// In mock mode (the playground sends the workbench's messages) it checks the playground's
+// internal key, resolves /<action> by action, checks the body's action and direction and
+// passes the answer through. In standalone mode it resolves the route only.
+//
+// See M2-DESIGN.md §3 and §6.
 package fdgate
 
 import (
+	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ONDC-Official/automation-beckn-plugins/pkg/fdroute"
+	"github.com/ONDC-Official/automation-beckn-plugins/pkg/fdwire"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 )
 
-// Mode is the workbench side fd-gate serves.
-type Mode string
-
-// Modes.
-const (
-	ModeNP         Mode = "np"         // in front of a participant under test
-	ModeMock       Mode = "mock"       // in front of the workbench's mock participant
-	ModeStandalone Mode = "standalone" // no participant behind it
-)
-
-// Error codes fd-gate answers with. The FD catalogue has none for faults at the workbench's
-// own edge, so these follow the spec's code pattern (^FD-[A-Z]+-[0-9]{4}$) under PWB.
-const (
-	CodeRouteNotFound  = "FD-PWB-0001" // ROUTE_NOT_FOUND
-	CodeNotImplemented = "FD-PWB-0002" // NOT_IMPLEMENTED
-	CodeInternal       = "FD-PWB-0003" // INTERNAL
-)
-
-// Config is fd-gate's configuration.
-type Config struct {
-	RouteTable  string // path to fd_routes.yaml (config key routeTable)
-	Mode        Mode   // config key mode
-	PassThrough bool   // config key passThrough: call next after resolving
-	PathPrefix  string // config key pathPrefix: the module's URL prefix, removed before matching
-}
-
-// ParseConfig reads fd-gate's plugin config map.
-func ParseConfig(cfg map[string]string) (*Config, error) {
-	c := &Config{RouteTable: strings.TrimSpace(cfg["routeTable"])}
-	if c.RouteTable == "" {
-		return nil, errors.New("fd-gate: routeTable is required")
-	}
-	switch m := Mode(strings.TrimSpace(cfg["mode"])); m {
-	case ModeNP, ModeMock, ModeStandalone:
-		c.Mode = m
-	case "":
-		return nil, errors.New("fd-gate: mode is required (np|mock|standalone)")
-	default:
-		return nil, fmt.Errorf("fd-gate: invalid mode %q (np|mock|standalone)", m)
-	}
-	if raw := strings.TrimSpace(cfg["passThrough"]); raw != "" {
-		v, err := strconv.ParseBool(raw)
-		if err != nil {
-			return nil, fmt.Errorf("fd-gate: invalid passThrough %q", raw)
-		}
-		c.PassThrough = v
-	}
-	c.PathPrefix = strings.TrimRight(strings.TrimSpace(cfg["pathPrefix"]), "/")
-	if c.PathPrefix != "" && !strings.HasPrefix(c.PathPrefix, "/") {
-		return nil, fmt.Errorf("fd-gate: pathPrefix %q must start with /", c.PathPrefix)
-	}
-	return c, nil
+// Deps are fd-gate's collaborators. New builds the production ones from the config; tests
+// inject fakes through NewGate.
+type Deps struct {
+	Store    Store            // required in np and mock modes
+	Keys     KeyLookup        // required in np mode when signatures are required
+	Notifier Notifier         // optional: replay notices are skipped without one
+	Now      func() time.Time // optional: defaults to time.Now
 }
 
 // Gate is a configured fd-gate.
 type Gate struct {
-	cfg        *Config
-	table      *fdroute.Table
-	prefixSegs []string
+	cfg          *Config
+	table        *fdroute.Table
+	prefixSegs   []string
+	store        Store
+	keys         KeyLookup
+	notifier     Notifier
+	now          func() time.Time
+	replayWait   time.Duration
+	defaultParty string // obligedParty when no route resolves
 }
 
 // New builds the middleware from the plugin config map. The route table is loaded and
@@ -89,24 +64,67 @@ func New(ctx context.Context, cfg map[string]string) (func(http.Handler) http.Ha
 	if err != nil {
 		return nil, err
 	}
-	g, err := NewGate(c)
+	var d Deps
+	if c.Mode != ModeStandalone {
+		d.Store = NewRedisStore(c.Addr, c.RedisUsername, c.RedisPassword)
+	}
+	if c.Mode == ModeNP && c.Signature == SignatureRequired {
+		d.Keys = NewCachedLookup(&RegistryLookup{
+			URL: c.RegistryURL, SubscriberID: c.SubscriberID, UniqueKeyID: c.UniqueKeyID,
+			SigningPrivateKey: c.SigningPrivateKey,
+		}, KeyCacheTTL)
+	}
+	if c.MockServiceURL != "" {
+		d.Notifier = &HTTPNotifier{MockServiceURL: c.MockServiceURL}
+	}
+	g, err := NewGate(c, d)
 	if err != nil {
 		return nil, err
 	}
-	log.Infof(ctx, "fd-gate: loaded %d routes for %s %s (tableHash %s), mode=%s passThrough=%t pathPrefix=%q",
-		len(g.table.Routes), g.table.Domain, g.table.Version, g.table.TableHash, c.Mode, c.PassThrough, c.PathPrefix)
+	log.Infof(ctx, "fd-gate: loaded %d routes for %s %s (tableHash %s), mode=%s pathPrefix=%q signature=%s requireHTTPS=%t registry=%q mockServiceURL=%q",
+		len(g.table.Routes), g.table.Domain, g.table.Version, g.table.TableHash, c.Mode, c.PathPrefix,
+		c.Signature, c.RequireHTTPS, c.RegistryURL, c.MockServiceURL)
+	if c.Mode == ModeNP && c.Signature == SignatureOff {
+		log.Warnf(ctx, "fd-gate: !!! FD SIGNATURE VERIFICATION IS OFF (signature=off / %s=off) for %s: participants are NOT authenticated. Use this for local debugging only. !!!",
+			EnvSignature, c.PathPrefix)
+	}
+	if c.Mode == ModeMock && c.InternalKey == "" {
+		log.Warnf(ctx, "fd-gate: %s is not set; the mock module accepts calls without the playground's internal key", EnvInternalKey)
+	}
+	if c.PassThrough {
+		log.Infof(ctx, "fd-gate: passThrough is ignored: M2 always forwards")
+	}
 	return g.Handler, nil
 }
 
-// NewGate loads the route table named by c.
-func NewGate(c *Config) (*Gate, error) {
+// NewGate loads the route table named by c and wires d.
+func NewGate(c *Config, d Deps) (*Gate, error) {
 	table, err := fdroute.Load(c.RouteTable)
 	if err != nil {
 		return nil, fmt.Errorf("fd-gate: %w", err)
 	}
-	g := &Gate{cfg: c, table: table}
+	if c.Mode != ModeStandalone && d.Store == nil {
+		return nil, fmt.Errorf("fd-gate: %s mode needs a store", c.Mode)
+	}
+	if c.Mode == ModeNP && c.Signature == SignatureRequired && d.Keys == nil {
+		return nil, errors.New("fd-gate: np mode with signature=required needs a key lookup")
+	}
+	if c.MaxBodyBytes <= 0 {
+		c.MaxBodyBytes = DefaultMaxBodyBytes
+	}
+	g := &Gate{
+		cfg: c, table: table, store: d.Store, keys: d.Keys, notifier: d.Notifier,
+		now: d.Now, replayWait: ReplayWait, defaultParty: fdwire.Party(fdroute.RoleInvestorApp),
+	}
+	if g.now == nil {
+		g.now = time.Now
+	}
 	if c.PathPrefix != "" {
 		g.prefixSegs = strings.Split(strings.TrimPrefix(c.PathPrefix, "/"), "/")
+		// The investor-app module is called by issuers; every other module by investor apps.
+		if g.prefixSegs[len(g.prefixSegs)-1] == "investor-app" {
+			g.defaultParty = fdwire.Party(fdroute.RoleDepositIssuer)
+		}
 	}
 	return g, nil
 }
@@ -115,6 +133,7 @@ func NewGate(c *Config) (*Gate, error) {
 func (g *Gate) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rw := &trackingWriter{ResponseWriter: w}
+		method, uri := r.Method, requestURIOf(r) // serve rewrites r
 		defer func() {
 			p := recover()
 			if p == nil {
@@ -123,25 +142,29 @@ func (g *Gate) Handler(next http.Handler) http.Handler {
 			if p == http.ErrAbortHandler {
 				panic(p)
 			}
-			log.Errorf(r.Context(), fmt.Errorf("panic: %v", p), "fd-gate: recovered panic on %s %s", r.Method, r.URL.RequestURI())
+			log.Errorf(r.Context(), fmt.Errorf("panic: %v", p), "fd-gate: recovered panic on %s %s", method, uri)
 			if !rw.wroteHeader {
-				writeError(rw, http.StatusInternalServerError, CodeInternal, "TECHNICAL", "PWB",
-					"the Protocol Workbench failed while handling this request")
+				writeNack(rw, nil, g.defaultParty, reject(CodeInternal, "", "the Protocol Workbench failed while handling this request"))
 			}
 		}()
-		g.serve(rw, r, next)
+		switch g.cfg.Mode {
+		case ModeNP:
+			g.serveNP(rw, r, next)
+		case ModeMock:
+			g.serveMock(rw, r, next)
+		default:
+			g.serveStandalone(rw, r, next)
+		}
 	})
 }
 
-func (g *Gate) serve(w http.ResponseWriter, r *http.Request, next http.Handler) {
-	fdroute.StripInternal(r.Header)
-	r.Header.Del("Cookie")
-
+// resolve strips the module prefix and matches the route, writing the 404 itself.
+func (g *Gate) resolve(w http.ResponseWriter, r *http.Request) (*fdroute.Route, map[string]string, string, bool) {
 	path, ok := g.stripPrefix(r.URL.EscapedPath())
 	if !ok {
-		writeError(w, http.StatusNotFound, CodeRouteNotFound, "PROTOCOL", "N-01",
-			fmt.Sprintf("%s %s is outside this FD module (%s)", r.Method, r.URL.EscapedPath(), g.cfg.PathPrefix))
-		return
+		writeNack(w, nil, g.defaultParty, reject(CodeRouteNotFound, "",
+			"%s %s is outside this FD module (%s)", r.Method, r.URL.EscapedPath(), g.cfg.PathPrefix).withStatus(http.StatusNotFound))
+		return nil, nil, "", false
 	}
 	route, params, err := g.table.Match(r.Method, path)
 	if err != nil {
@@ -150,28 +173,296 @@ func (g *Gate) serve(w http.ResponseWriter, r *http.Request, next http.Handler) 
 		if errors.As(err, &nre) && len(nre.Allowed) > 0 {
 			msg += fmt.Sprintf(" (this path takes %s)", strings.Join(nre.Allowed, ", "))
 		}
-		writeError(w, http.StatusNotFound, CodeRouteNotFound, "PROTOCOL", "N-01", msg)
-		return
+		writeNack(w, nil, g.defaultParty, reject(CodeRouteNotFound, "", "%s", msg).withStatus(http.StatusNotFound))
+		return nil, nil, "", false
 	}
+	return route, params, path, true
+}
 
-	if !g.cfg.PassThrough {
-		writeError(w, http.StatusNotImplemented, CodeNotImplemented, "PROTOCOL", "N-01",
-			fmt.Sprintf("%s %s resolves to %s, which this workbench build does not handle yet", r.Method, path, route.Action))
+func (g *Gate) serveStandalone(w http.ResponseWriter, r *http.Request, next http.Handler) {
+	fdroute.StripInternal(r.Header)
+	r.Header.Del("Cookie")
+	route, params, _, ok := g.resolve(w, r)
+	if !ok {
 		return
-	}
-
-	requestURI := r.RequestURI
-	if requestURI == "" {
-		requestURI = r.URL.RequestURI()
 	}
 	res := &fdroute.Resolution{
-		Route:              route,
-		PathParams:         params,
-		Query:              r.URL.Query(),
-		OriginalMethod:     r.Method,
-		OriginalRequestURI: requestURI,
+		Route: route, PathParams: params, Query: r.URL.Query(),
+		OriginalMethod: r.Method, OriginalRequestURI: requestURIOf(r),
 	}
 	next.ServeHTTP(w, r.WithContext(fdroute.WithResolution(r.Context(), res)))
+}
+
+// serveNP handles a participant's call (§3, np mode).
+func (g *Gate) serveNP(w http.ResponseWriter, r *http.Request, next http.Handler) {
+	ctx := r.Context()
+	requestURI := requestURIOf(r)
+	stripInbound(r.Header)
+
+	route, params, path, ok := g.resolve(w, r)
+	if !ok {
+		return
+	}
+	obliged := fdwire.Party(route.Caller)
+	isGet := r.Method == http.MethodGet
+
+	var body []byte
+	if !isGet {
+		var gerr *gateError
+		if body, gerr = g.readBody(r); gerr != nil {
+			writeNack(w, nil, obliged, gerr)
+			return
+		}
+	} else if r.Body != nil {
+		r.Body.Close() // a read has no body; its digest covers no bytes
+	}
+	echo := peekContext(body)
+
+	var signer, ukid string
+	if g.cfg.Signature == SignatureRequired {
+		auth, gerr := g.verifySignature(ctx, r, requestURI, body)
+		if gerr != nil {
+			if isGet {
+				echo = mustJSON(g.newReadContext(route, "", nil))
+			}
+			writeNack(w, echo, obliged, gerr)
+			return
+		}
+		signer, ukid = auth.SubscriberID, auth.UniqueKeyID
+	}
+
+	var internal []byte
+	var fb *fdBody
+	if isGet {
+		var gerr *gateError
+		internal, echo, gerr = g.buildReadBody(ctx, route, params, r.URL.Query(), signer)
+		if gerr != nil {
+			writeNack(w, echo, obliged, gerr)
+			return
+		}
+	} else {
+		var gerr *gateError
+		if fb, gerr = parseFDBody(body); gerr != nil {
+			writeNack(w, echo, obliged, gerr)
+			return
+		}
+		if signer != "" {
+			if gerr := checkSigner(route, fb, signer); gerr != nil {
+				writeNack(w, echo, obliged, gerr)
+				return
+			}
+		} else {
+			signer, _ = senderID(route, fb)
+		}
+		if gerr := g.checkTransportRules(route, params, fb); gerr != nil {
+			writeNack(w, echo, obliged, gerr)
+			return
+		}
+		internal = body
+	}
+
+	var claim *replayClaim
+	if !isGet {
+		key := ReplayKey(g.table.Domain, signer, route.Action, fb.str("message_id"))
+		outcome, rec, c, err := g.replayCheck(ctx, key, body)
+		if err != nil {
+			log.Errorf(ctx, err, "fd-gate: replay check for %s failed", key)
+			writeNack(w, echo, obliged, reject(CodeInternal, "", "the workbench cannot check this message for replay: %v", err))
+			return
+		}
+		switch outcome {
+		case replayConflict:
+			writeNack(w, echo, obliged, reject(CodeMessageIDReused, "/context/message_id",
+				"message_id %s was already used for a different %s from %s; a retry must resend the identical body",
+				fb.str("message_id"), route.Action, signer))
+			return
+		case replayStored, replayAwaited:
+			g.writeRecord(w, rec)
+			if outcome == replayStored && isAsyncRequest(route) && rec.Status == http.StatusAccepted {
+				g.notifyReplay(ctx, ReplayNotice{
+					Domain: g.table.Domain, Version: g.table.Version, Action: route.Action,
+					MessageID: fb.str("message_id"), TransactionID: fb.str("transaction_id"),
+					SubscriberURL: senderURI(route, fb),
+				})
+			}
+			return
+		}
+		claim = c
+		defer claim.release(ctx) // a no-op once finished; frees the key on a panic
+		g.indexBody(ctx, fb)
+	}
+
+	fdPath := path
+	if r.URL.RawQuery != "" {
+		fdPath += "?" + r.URL.RawQuery
+	}
+	res := &fdroute.Resolution{
+		Route: route, PathParams: params, Query: r.URL.Query(),
+		OriginalMethod: r.Method, OriginalRequestURI: requestURI,
+		CallerSubscriberID: signer, CallerUniqueKeyID: ukid,
+	}
+	r.Header.Set(fdroute.HeaderFdMethod, r.Method)
+	r.Header.Set(fdroute.HeaderFdPath, fdPath)
+	inner := g.translate(r, route, params, internal, res)
+
+	bw := newBufferWriter()
+	next.ServeHTTP(bw, inner)
+
+	resp := g.shapeNP(route, echo, bw, obliged)
+	stripForParticipant(resp.header)
+	if resp.status < 300 {
+		g.indexResponse(ctx, resp)
+	}
+	claim.finish(ctx, resp.status, resp.contentType(), resp.body, resp.storable)
+	writeBody(w, resp.status, resp.header, resp.body)
+}
+
+// translate turns r into the internal POST <prefix>/<action> with body, carrying the FD
+// headers and the Resolution. The headers are set on the request before the inner chain
+// runs, so network-observability records them.
+func (g *Gate) translate(r *http.Request, route *fdroute.Route, params map[string]string, body []byte, res *fdroute.Resolution) *http.Request {
+	r.Method = http.MethodPost
+	r.URL.Path = g.cfg.PathPrefix + "/" + route.Action
+	r.URL.RawPath = ""
+	r.URL.RawQuery = ""
+	r.RequestURI = r.URL.RequestURI()
+	setBody(r, body)
+	r.Header.Set(fdroute.HeaderFdRoute, route.Action)
+	r.Header.Set(fdroute.HeaderFdPathParams, string(mustJSON(nonNil(params))))
+	return r.WithContext(fdroute.WithResolution(r.Context(), res))
+}
+
+// serveMock handles the playground's call (§3, mock mode).
+func (g *Gate) serveMock(w http.ResponseWriter, r *http.Request, next http.Handler) {
+	ctx := r.Context()
+	requestURI := requestURIOf(r)
+	key := r.Header.Get(fdroute.HeaderInternalKey)
+	rawParams := strings.TrimSpace(r.Header.Get(fdroute.HeaderFdPathParams))
+	replay := strings.TrimSpace(r.Header.Get(fdroute.HeaderFdReplay)) == "1"
+	stripInbound(r.Header)
+
+	if g.cfg.InternalKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(g.cfg.InternalKey)) != 1 {
+		writeNack(w, nil, g.defaultParty, reject(CodeInternalKeyInvalid, "",
+			"the mock module takes calls from the playground only: %s is missing or wrong", fdroute.HeaderInternalKey).withStatus(http.StatusForbidden))
+		return
+	}
+	path, ok := g.stripPrefix(r.URL.EscapedPath())
+	action := strings.TrimPrefix(path, "/")
+	var route *fdroute.Route
+	if ok && action != "" && !strings.Contains(action, "/") {
+		route, ok = g.table.ByAction(action)
+	} else {
+		ok = false
+	}
+	if !ok {
+		writeNack(w, nil, g.defaultParty, reject(CodeRouteNotFound, "",
+			"no FD %s action for %s %s", g.table.Version, r.Method, r.URL.EscapedPath()).withStatus(http.StatusNotFound))
+		return
+	}
+	obliged := fdwire.Party(route.Caller)
+	if r.Method != http.MethodPost {
+		writeNack(w, nil, obliged, reject(CodeRouteNotFound, "",
+			"the mock module takes POST /%s, not %s", route.Action, r.Method).withStatus(http.StatusNotFound))
+		return
+	}
+	body, gerr := g.readBody(r)
+	if gerr != nil {
+		writeNack(w, nil, obliged, gerr)
+		return
+	}
+	echo := peekContext(body)
+	bad := func(e *gateError) { writeNack(w, echo, obliged, e.withStatus(http.StatusBadRequest)) }
+
+	fb, gerr := parseFDBody(body)
+	if gerr != nil {
+		bad(gerr)
+		return
+	}
+	if a := fb.str("action"); a != route.Action {
+		bad(reject(CodeActionPathMismatch, "/context/action", "context.action is %q but the playground called /%s", a, route.Action))
+		return
+	}
+	if role, _ := fb.envelope["originatorRole"].(string); role != route.Caller {
+		bad(reject(CodeWrongDirection, "/fdEnvelope/originatorRole", "fdEnvelope.originatorRole is %q but %s is sent by %s", role, route.Action, route.Caller))
+		return
+	}
+	params := map[string]string{}
+	if rawParams != "" {
+		if err := json.Unmarshal([]byte(rawParams), &params); err != nil || params == nil {
+			bad(reject(CodePathParamsInvalid, "", "%s is not a JSON object of strings: %s", fdroute.HeaderFdPathParams, rawParams))
+			return
+		}
+	}
+	restPath, err := route.RenderPath(params)
+	if err != nil {
+		bad(reject(CodePathParamsInvalid, "", "%s: %v", fdroute.HeaderFdPathParams, err))
+		return
+	}
+	g.indexBody(ctx, fb)
+
+	r.Header.Set(fdroute.HeaderFdRoute, route.Action)
+	r.Header.Set(fdroute.HeaderFdPathParams, string(mustJSON(params)))
+	r.Header.Set(fdroute.HeaderFdMethod, route.Method)
+	r.Header.Set(fdroute.HeaderFdPath, restPath)
+	if replay {
+		r.Header.Set(fdroute.HeaderFdReplay, "1")
+	}
+	setBody(r, body)
+	res := &fdroute.Resolution{
+		Route: route, PathParams: params, OriginalMethod: r.Method, OriginalRequestURI: requestURI, Replay: replay,
+	}
+
+	bw := newBufferWriter()
+	next.ServeHTTP(bw, r.WithContext(fdroute.WithResolution(ctx, res)))
+	status := bw.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	resp := &response{status: status, header: cleanHeader(bw.header, false), body: bw.body.Bytes()}
+	if status < 300 {
+		g.indexResponse(ctx, resp)
+	}
+	writeBody(w, resp.status, resp.header, resp.body)
+}
+
+// indexResponse indexes the correlation ids of an FD message in a response body (a SYNC
+// answer), so later reads of the objects it names resolve.
+func (g *Gate) indexResponse(ctx context.Context, resp *response) {
+	if encoded(resp.header) {
+		return
+	}
+	if fb, err := parseFDBody(resp.body); err == nil {
+		g.indexBody(ctx, fb)
+	}
+}
+
+// writeRecord serves a stored response.
+func (g *Gate) writeRecord(w http.ResponseWriter, rec *replayRecord) {
+	h := http.Header{}
+	for k, v := range rec.Headers {
+		h.Set(k, v)
+	}
+	writeBody(w, rec.Status, h, []byte(rec.Body))
+}
+
+// readBody reads a POST body up to maxBodyBytes.
+func (g *Gate) readBody(r *http.Request) ([]byte, *gateError) {
+	tooLarge := reject(CodeBodyTooLarge, "", "the body exceeds %d bytes", g.cfg.MaxBodyBytes).withStatus(http.StatusRequestEntityTooLarge)
+	if r.Body == nil {
+		return nil, nil
+	}
+	defer r.Body.Close()
+	if r.ContentLength > g.cfg.MaxBodyBytes {
+		return nil, tooLarge
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, g.cfg.MaxBodyBytes+1))
+	if err != nil {
+		return nil, reject(CodeBodyMalformed, "", "the body cannot be read: %v", err)
+	}
+	if int64(len(data)) > g.cfg.MaxBodyBytes {
+		return nil, tooLarge
+	}
+	return data, nil
 }
 
 // stripPrefix removes the configured module prefix from an escaped path, comparing decoded
@@ -194,37 +485,39 @@ func (g *Gate) stripPrefix(escaped string) (string, bool) {
 	return "/" + strings.Join(segs[len(g.prefixSegs):], "/"), true
 }
 
-// ErrorBody is fd-gate's error response: an ONDC NACK carrying an FD Error.
-type ErrorBody struct {
-	Message struct {
-		Ack struct {
-			Status string `json:"status"`
-		} `json:"ack"`
-	} `json:"message"`
-	Error FDError `json:"error"`
+// stripInbound removes what a caller must not be able to set: internal headers, cookies
+// (which drive workbench behaviour such as custom-response-body) and Accept-Encoding (so the
+// inner response arrives decoded and fd-gate can read it).
+func stripInbound(h http.Header) {
+	fdroute.StripInternal(h)
+	h.Del("Cookie")
+	h.Del("Accept-Encoding")
 }
 
-// FDError is the FD protocol's error object (the fields fd-gate fills).
-type FDError struct {
-	Code         string `json:"code"`
-	Class        string `json:"class"`
-	Message      string `json:"message"`
-	ObligedParty string `json:"obligedParty"`
-	Retryable    bool   `json:"retryable"`
+func setBody(r *http.Request, body []byte) {
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+	r.ContentLength = int64(len(body))
+	r.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	r.Header.Set("Content-Type", "application/json")
 }
 
-func writeError(w http.ResponseWriter, status int, code, class, obliged, message string) {
-	var body ErrorBody
-	body.Message.Ack.Status = "NACK"
-	body.Error = FDError{Code: code, Class: class, Message: message, ObligedParty: obliged}
-	data, err := json.Marshal(body)
-	if err != nil { // cannot happen for this struct
-		http.Error(w, message, status)
-		return
+func requestURIOf(r *http.Request) string {
+	if r.RequestURI != "" {
+		return r.RequestURI
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(data)
+	return r.URL.RequestURI()
+}
+
+func isAsyncRequest(route *fdroute.Route) bool {
+	return route.Kind == fdroute.KindRequest && route.Mode == fdroute.ModeAsyncAckCallback
+}
+
+func nonNil(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
 }
 
 // trackingWriter records whether a response has started, so a recovered panic does not
@@ -244,6 +537,5 @@ func (w *trackingWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// Unwrap lets http.ResponseController (used by httputil.ReverseProxy) reach the underlying
-// writer's Flush/Hijack.
+// Unwrap lets http.ResponseController reach the underlying writer's Flush/Hijack.
 func (w *trackingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
