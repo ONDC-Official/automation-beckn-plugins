@@ -44,16 +44,16 @@ func (r *WorkbenchRequestReceiver) ReceiveFromNP(ctx context.Context, requestDat
 	)
 	if subscriberData != nil {
 		err := r.tryFulfillExpectation(ctx, subscriberData, requestData)
-		if( err != nil ){
+		if err != nil {
 			return err
 		}
 	}
-	if(requestData.SessionID != ""){
+	if requestData.SessionID != "" {
 		sessionData, sessionErr := r.sessionCache.LoadSessionThatExists(
 			ctx, requestData.SessionID,
 		)
 		if sessionErr != nil {
-			log.Errorf(ctx,sessionErr,"failed to load session data for session id: %s", requestData.SessionID)
+			log.Errorf(ctx, sessionErr, "failed to load session data for session id: %s", requestData.SessionID)
 			return payloadutils.NewInternalServerNackError(sessionErr.Error(), requestData.BodyRaw["context"])
 		}
 		requestData.Difficulty = sessionData.SessionDifficulty
@@ -62,8 +62,8 @@ func (r *WorkbenchRequestReceiver) ReceiveFromNP(ctx context.Context, requestDat
 		return nil
 	}
 	return payloadutils.NewPreconditionFailedHTTPError(
-		fmt.Sprintf("No active expectation found for transaction ID: %s and Subscriber URL: %s for as a %s", requestData.TransactionID, requestData.SubscriberURL,requestData.RequestOwner),
-	) 
+		fmt.Sprintf("No active expectation found for transaction ID: %s and Subscriber URL: %s for as a %s", requestData.TransactionID, requestData.SubscriberURL, requestData.RequestOwner),
+	)
 }
 
 func (r *WorkbenchRequestReceiver) ReceiveFromMock(ctx context.Context, requestData *apiservice.WorkbenchRequestData) error {
@@ -76,8 +76,8 @@ func (r *WorkbenchRequestReceiver) ReceiveFromMock(ctx context.Context, requestD
 	if exits {
 		return r.handleTransactionWhichExits(ctx, requestData)
 	}
-	flowID,SessionID := requestData.Request.URL.Query().Get("flow_id"),requestData.Request.URL.Query().Get("session_id")
-	if(flowID == "" || SessionID == ""){
+	flowID, SessionID := requestData.Request.URL.Query().Get("flow_id"), requestData.Request.URL.Query().Get("session_id")
+	if flowID == "" || SessionID == "" {
 		return payloadutils.NewBadRequestHTTPError("session_id and flow_id are required query parameters for mock requests")
 	}
 	requestData.FlowID = flowID
@@ -86,10 +86,10 @@ func (r *WorkbenchRequestReceiver) ReceiveFromMock(ctx context.Context, requestD
 		ctx, requestData.SessionID,
 	)
 	if sessionErr != nil {
-		log.Errorf(ctx,sessionErr,"failed to load session data for session id: %s", requestData.SessionID)
+		log.Errorf(ctx, sessionErr, "failed to load session data for session id: %s", requestData.SessionID)
 		return payloadutils.NewInternalServerNackError(sessionErr.Error(), requestData.BodyRaw["context"])
 	}
-	if(sessionData == nil){
+	if sessionData == nil {
 		return payloadutils.NewBadRequestHTTPError(
 			fmt.Sprintf("session data not found for session id: %s", requestData.SessionID),
 		)
@@ -103,11 +103,11 @@ func (r *WorkbenchRequestReceiver) ReceiveFromMock(ctx context.Context, requestD
 func (r *WorkbenchRequestReceiver) tryFulfillExpectation(ctx context.Context, subscriberData *cache.SubscriberCache, requestData *apiservice.WorkbenchRequestData) error {
 	newExpectations := []cache.Expectation{}
 	fulfilled := false
-	log.Infof(ctx,"Trying to fulfill api expectaion for action: %s and subData: %+#v", requestData.BodyEnvelope.Context.Action, subscriberData)
+	log.Infof(ctx, "Trying to fulfill api expectaion for action: %s and subData: %+#v", requestData.BodyEnvelope.Context.Action, subscriberData)
 	for _, expectation := range subscriberData.ActiveSessions {
-		expiredTime,err := time.Parse(time.RFC3339,expectation.ExpireAt)
+		expiredTime, err := time.Parse(time.RFC3339, expectation.ExpireAt)
 		if err != nil {
-			log.Errorf(ctx,err,"invalid expectation expire time format: %v", expectation.ExpireAt)
+			log.Errorf(ctx, err, "invalid expectation expire time format: %v", expectation.ExpireAt)
 			return payloadutils.NewInternalServerNackError("invalid expectation expire time", requestData.BodyRaw["context"])
 		}
 		nowTime := time.Now()
@@ -120,14 +120,14 @@ func (r *WorkbenchRequestReceiver) tryFulfillExpectation(ctx context.Context, su
 			requestData.SessionID = expectation.SessionId
 			fulfilled = true
 			log.Infof(ctx, "expectation fulfilled: %+#v", expectation)
-		}else {
+		} else {
 			newExpectations = append(newExpectations, expectation)
 		}
 	}
 	subscriberData.ActiveSessions = newExpectations
-	err := r.subscriberCache.UpdateSubscriber(ctx,requestData.SubscriberURL,subscriberData,0)
+	err := r.subscriberCache.UpdateSubscriber(ctx, requestData.SubscriberURL, subscriberData, 0)
 	if err != nil {
-		log.Errorf(ctx,err,"failed to update subscriber cache after fulfilling expectation")
+		log.Errorf(ctx, err, "failed to update subscriber cache after fulfilling expectation")
 	}
 	return nil
 }
@@ -181,6 +181,6 @@ func (r *WorkbenchRequestReceiver) assignTransactionToSession(
 	sessionID string,
 	flowID string,
 	transactionID string,
-){
-	r.sessionCache.UpdateSessionCache(ctx,sessionID,flowID,transactionID,0)
+) {
+	r.sessionCache.UpdateSessionCache(ctx, sessionID, flowID, transactionID, 0)
 }

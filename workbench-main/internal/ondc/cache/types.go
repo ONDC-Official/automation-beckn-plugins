@@ -24,14 +24,14 @@ type SessionDifficulty struct {
 	UseGzip              bool `json:"useGzip"`
 	EncryptionValidation bool `json:"encryptionValidation"`
 	UseCare              bool `json:"useCare"`
-	UseTunnelForFIS	 	 bool `json:"useTunnelForFIS"`
+	UseTunnelForFIS      bool `json:"useTunnelForFIS"`
 }
 
 type Expectation struct {
-	SessionId       string  `json:"sessionId"`
-	FlowId          string  `json:"flowId"`
-	ExpectedAction  string `json:"expectedAction,omitempty"`
-	ExpireAt        string  `json:"expireAt"`
+	SessionId      string `json:"sessionId"`
+	FlowId         string `json:"flowId"`
+	ExpectedAction string `json:"expectedAction,omitempty"`
+	ExpireAt       string `json:"expireAt"`
 }
 
 type ApiData struct {
@@ -46,12 +46,12 @@ type ApiData struct {
 }
 
 type FormApiType struct {
-	EntryType     string `json:"entryType"`
-	FormType      string `json:"formType"`
-	FormId        string `json:"formId"`
-	SubmissionId  *string `json:"submissionId,omitempty"`
-	Timestamp     string `json:"timestamp"`
-	Error         any    `json:"error,omitempty"`
+	EntryType    string  `json:"entryType"`
+	FormType     string  `json:"formType"`
+	FormId       string  `json:"formId"`
+	SubmissionId *string `json:"submissionId,omitempty"`
+	Timestamp    string  `json:"timestamp"`
+	Error        any     `json:"error,omitempty"`
 }
 
 // HistoryType in TS is a union of ApiData | FormApiType.
@@ -59,15 +59,15 @@ type FormApiType struct {
 // When writing new items we typically append strongly-typed ApiData/FormApiType.
 
 type TransactionCache struct {
-	SessionId       string           `json:"sessionId,omitempty"`
-	FlowId          string           `json:"flowId,omitempty"`
-	LatestAction    string            `json:"latestAction"`
-	LatestTimestamp string            `json:"latestTimestamp"`
-	Type            string            `json:"type"`
-	SubscriberType  string            `json:"subscriberType"`
-	MessageIds      []string          `json:"messageIds"`
-	ApiList         []any             `json:"apiList"`
-	ReferenceData   map[string]any    `json:"referenceData"`
+	SessionId       string         `json:"sessionId,omitempty"`
+	FlowId          string         `json:"flowId,omitempty"`
+	LatestAction    string         `json:"latestAction"`
+	LatestTimestamp string         `json:"latestTimestamp"`
+	Type            string         `json:"type"`
+	SubscriberType  string         `json:"subscriberType"`
+	MessageIds      []string       `json:"messageIds"`
+	ApiList         []any          `json:"apiList"`
+	ReferenceData   map[string]any `json:"referenceData"`
 }
 
 type SubscriberCache struct {
@@ -75,30 +75,30 @@ type SubscriberCache struct {
 }
 
 type SessionCache struct {
-	TransactionIds     []string          `json:"transactionIds"`
-	FlowMap            map[string]string `json:"flowMap"`
-	NpType             string            `json:"npType"`
-	Domain             string            `json:"domain"`
-	Version            string            `json:"version"`
-	SubscriberId       *string           `json:"subscriberId,omitempty"`
-	SubscriberUrl      string            `json:"subscriberUrl"`
-	Env                string            `json:"env"`
-	SessionDifficulty  SessionDifficulty `json:"sessionDifficulty"`
-	UsecaseId          string            `json:"usecaseId"`
-	ActiveFlow         *string           `json:"activeFlow,omitempty"`
-	FlowConfigs 	   map[string]any  `json:"flowConfigs,omitempty"`
+	TransactionIds    []string          `json:"transactionIds"`
+	FlowMap           map[string]string `json:"flowMap"`
+	NpType            string            `json:"npType"`
+	Domain            string            `json:"domain"`
+	Version           string            `json:"version"`
+	SubscriberId      *string           `json:"subscriberId,omitempty"`
+	SubscriberUrl     string            `json:"subscriberUrl"`
+	Env               string            `json:"env"`
+	SessionDifficulty SessionDifficulty `json:"sessionDifficulty"`
+	UsecaseId         string            `json:"usecaseId"`
+	ActiveFlow        *string           `json:"activeFlow,omitempty"`
+	FlowConfigs       map[string]any    `json:"flowConfigs,omitempty"`
 }
 
 type RequestProperties struct {
-	SubscriberUrl     string            `json:"subscriberUrl"`
-	SubscriberType    string            `json:"subscriberType"`
-	Action            string            `json:"action"`
-	TransactionId     string            `json:"transactionId"`
-	Difficulty        SessionDifficulty `json:"difficulty"`
-	SessionId         *string           `json:"sessionId,omitempty"`
-	FlowId            *string           `json:"flowId,omitempty"`
-	Env               string            `json:"env"`
+	SubscriberUrl      string            `json:"subscriberUrl"`
+	SubscriberType     string            `json:"subscriberType"`
+	Action             string            `json:"action"`
+	TransactionId      string            `json:"transactionId"`
+	Difficulty         SessionDifficulty `json:"difficulty"`
+	SessionId          *string           `json:"sessionId,omitempty"`
+	FlowId             *string           `json:"flowId,omitempty"`
+	Env                string            `json:"env"`
 	TransactionHistory *TransactionCache `json:"transactionHistory,omitempty"`
-	SessionData       *SessionCache     `json:"sessionData,omitempty"`
-	RequestSource     *string           `json:"requestSource,omitempty"`
+	SessionData        *SessionCache     `json:"sessionData,omitempty"`
+	RequestSource      *string           `json:"requestSource,omitempty"`
 }
