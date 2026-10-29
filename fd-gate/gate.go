@@ -308,6 +308,7 @@ func (g *Gate) serveNP(w http.ResponseWriter, r *http.Request, next http.Handler
 	}
 	r.Header.Set(fdroute.HeaderFdMethod, r.Method)
 	r.Header.Set(fdroute.HeaderFdPath, fdPath)
+	r.Header.Set(fdroute.HeaderFdOrigin, fdroute.OriginNP)
 	inner := g.translate(r, route, params, internal, res)
 
 	bw := newBufferWriter()
@@ -409,6 +410,7 @@ func (g *Gate) serveMock(w http.ResponseWriter, r *http.Request, next http.Handl
 	r.Header.Set(fdroute.HeaderFdPathParams, string(mustJSON(params)))
 	r.Header.Set(fdroute.HeaderFdMethod, route.Method)
 	r.Header.Set(fdroute.HeaderFdPath, restPath)
+	r.Header.Set(fdroute.HeaderFdOrigin, fdroute.OriginWorkbench)
 	if replay {
 		r.Header.Set(fdroute.HeaderFdReplay, "1")
 	}

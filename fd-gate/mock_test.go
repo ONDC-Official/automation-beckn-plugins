@@ -62,7 +62,8 @@ func TestMockHappyPath(t *testing.T) {
 	got := in.seen()
 	h := got.header
 	if h.Get(fdroute.HeaderFdRoute) != "application_confirm" || h.Get(fdroute.HeaderFdPathParams) != `{"applicationId":"APP-1"}` ||
-		h.Get(fdroute.HeaderFdMethod) != "POST" || h.Get(fdroute.HeaderFdPath) != "/applications/APP-1/confirm" || h.Get(fdroute.HeaderFdReplay) != "1" {
+		h.Get(fdroute.HeaderFdMethod) != "POST" || h.Get(fdroute.HeaderFdPath) != "/applications/APP-1/confirm" || h.Get(fdroute.HeaderFdReplay) != "1" ||
+		h.Get(fdroute.HeaderFdOrigin) != fdroute.OriginWorkbench {
 		t.Fatalf("FD headers %v", h)
 	}
 	if h.Get(fdroute.HeaderInternalKey) != "" || h.Get("X-Pwb-Other") != "" || h.Get("Cookie") != "" {

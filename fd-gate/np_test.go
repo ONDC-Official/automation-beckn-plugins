@@ -282,7 +282,8 @@ func TestNPAsyncRequestAccepted(t *testing.T) {
 	}
 	h := got.header
 	if h.Get("X-Pwb-Fd-Route") != "application_confirm" || h.Get("X-Pwb-Fd-Method") != "POST" ||
-		h.Get("X-Pwb-Fd-Path") != "/applications/APP-1/confirm?trace=1" || h.Get("X-Pwb-Fd-Path-Params") != `{"applicationId":"APP-1"}` {
+		h.Get("X-Pwb-Fd-Path") != "/applications/APP-1/confirm?trace=1" || h.Get("X-Pwb-Fd-Path-Params") != `{"applicationId":"APP-1"}` ||
+		h.Get(fdroute.HeaderFdOrigin) != fdroute.OriginNP {
 		t.Fatalf("FD headers: %v", h)
 	}
 	if h.Get("Cookie") != "" || h.Get("Accept-Encoding") != "" || h.Get("Authorization") == "" {

@@ -48,10 +48,18 @@ const (
 	HeaderFdMethod     = "X-Pwb-Fd-Method"      // the REST method as sent
 	HeaderFdPath       = "X-Pwb-Fd-Path"        // the REST path (and query) as sent, without the module prefix
 	HeaderFdReplay     = "X-Pwb-Fd-Replay"      // "1" when the playground re-sends a stored message
+	HeaderFdOrigin     = "X-Pwb-Fd-Origin"      // who sent the message: OriginNP or OriginWorkbench
 	HeaderFdGateError  = "X-Pwb-Fd-Gate-Error"  // on a response: the FD-PWB code of the workbench's own refusal (internal hops only)
 	HeaderFdEnvelope   = "X-Pwb-Fd-Envelope"
 	HeaderUpstreamMs   = "X-Pwb-Upstream-Ms" // participant response time in ms, set by fd-transport
 	HeaderInternalKey  = "X-Pwb-Internal-Key"
+)
+
+// Values of HeaderFdOrigin, which fd-gate sets so that the recorder (and the report judging a run
+// from what it recorded) knows who sent each message.
+const (
+	OriginNP        = "np"        // the participant under test called the workbench (np mode)
+	OriginWorkbench = "workbench" // the workbench's mock sent it through mock/ (mock mode)
 )
 
 // IsInternalHeader reports whether name (any case) is a workbench-internal header.
