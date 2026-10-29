@@ -37,6 +37,9 @@ func TestProviderNew(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	for _, k := range []string{"FD_SIGNATURE", "FD_REQUIRE_HTTPS", "FD_REGISTRY_URL", "MOCK_SERVER_URL"} {
+		t.Setenv(k, "") // independent of the shell's environment
+	}
 	// The plugin manager passes adapter.yaml's values as strings. Redis is connected lazily,
 	// so no server is needed to build the middleware.
 	mw, err := Provider.New(context.Background(), map[string]string{"routeTable": p, "mode": "np", "addr": "127.0.0.1:1", "requireHTTPS": "true"})
