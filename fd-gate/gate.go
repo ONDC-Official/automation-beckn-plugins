@@ -144,7 +144,12 @@ func (g *Gate) Handler(next http.Handler) http.Handler {
 			}
 			log.Errorf(r.Context(), fmt.Errorf("panic: %v", p), "fd-gate: recovered panic on %s %s", method, uri)
 			if !rw.wroteHeader {
-				writeNack(rw, nil, g.defaultParty, reject(CodeInternal, "", "the Protocol Workbench failed while handling this request"))
+				e := reject(CodeInternal, "", "the Protocol Workbench failed while handling this request")
+				if g.cfg.Mode == ModeMock {
+					g.mockNack(rw, nil, g.defaultParty, e)
+				} else {
+					writeNack(rw, nil, g.defaultParty, e)
+				}
 			}
 		}()
 		switch g.cfg.Mode {
@@ -342,7 +347,7 @@ func (g *Gate) serveMock(w http.ResponseWriter, r *http.Request, next http.Handl
 	stripInbound(r.Header)
 
 	if g.cfg.InternalKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(g.cfg.InternalKey)) != 1 {
-		writeNack(w, nil, g.defaultParty, reject(CodeInternalKeyInvalid, "",
+		g.mockNack(w, nil, g.defaultParty, reject(CodeInternalKeyInvalid, "",
 			"the mock module takes calls from the playground only: %s is missing or wrong", fdroute.HeaderInternalKey).withStatus(http.StatusForbidden))
 		return
 	}
@@ -355,23 +360,23 @@ func (g *Gate) serveMock(w http.ResponseWriter, r *http.Request, next http.Handl
 		ok = false
 	}
 	if !ok {
-		writeNack(w, nil, g.defaultParty, reject(CodeRouteNotFound, "",
+		g.mockNack(w, nil, g.defaultParty, reject(CodeRouteNotFound, "",
 			"no FD %s action for %s %s", g.table.Version, r.Method, r.URL.EscapedPath()).withStatus(http.StatusNotFound))
 		return
 	}
 	obliged := fdwire.Party(route.Caller)
 	if r.Method != http.MethodPost {
-		writeNack(w, nil, obliged, reject(CodeRouteNotFound, "",
+		g.mockNack(w, nil, obliged, reject(CodeRouteNotFound, "",
 			"the mock module takes POST /%s, not %s", route.Action, r.Method).withStatus(http.StatusNotFound))
 		return
 	}
 	body, gerr := g.readBody(r)
 	if gerr != nil {
-		writeNack(w, nil, obliged, gerr)
+		g.mockNack(w, nil, obliged, gerr)
 		return
 	}
 	echo := peekContext(body)
-	bad := func(e *gateError) { writeNack(w, echo, obliged, e.withStatus(http.StatusBadRequest)) }
+	bad := func(e *gateError) { g.mockNack(w, echo, obliged, e.withStatus(http.StatusBadRequest)) }
 
 	fb, gerr := parseFDBody(body)
 	if gerr != nil {
@@ -423,6 +428,14 @@ func (g *Gate) serveMock(w http.ResponseWriter, r *http.Request, next http.Handl
 		g.indexResponse(ctx, resp)
 	}
 	writeBody(w, resp.status, resp.header, resp.body)
+}
+
+// mockNack writes fd-gate's own refusal of a playground call, naming its code in
+// X-Pwb-Fd-Gate-Error so the playground can tell it from a participant's answer. Mock-mode
+// responses go back to the playground only, never to a participant.
+func (g *Gate) mockNack(w http.ResponseWriter, ctx json.RawMessage, obliged string, e *gateError) {
+	w.Header().Set(fdroute.HeaderFdGateError, e.code)
+	writeNack(w, ctx, obliged, e)
 }
 
 // indexResponse indexes the correlation ids of an FD message in a response body (a SYNC

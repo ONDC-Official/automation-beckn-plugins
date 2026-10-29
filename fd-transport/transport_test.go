@@ -375,19 +375,39 @@ func TestWireRequest(t *testing.T) {
 	}
 }
 
+// expectRefusal checks a refusal response: status, NACK body, code and gate-error header.
+func expectRefusal(t *testing.T, resp *http.Response, err error, status int, code string) fdwire.Body {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("want a refusal response, got error %v", err)
+	}
+	if resp.StatusCode != status || resp.Header.Get("Content-Type") != "application/json" || resp.Header.Get(fdroute.HeaderFdGateError) != code {
+		t.Fatalf("status %d, headers %v", resp.StatusCode, resp.Header)
+	}
+	data, _ := io.ReadAll(resp.Body)
+	var b fdwire.Body
+	if err := json.Unmarshal(data, &b); err != nil || b.Message.Ack.Status != "NACK" || b.Error == nil || b.Error.Code != code ||
+		b.Error.Class != "PROTOCOL" || b.Error.Reason != "FIELD_CONSTRAINT_VIOLATED" || b.Error.Retryable {
+		t.Fatalf("body %s", data)
+	}
+	return b
+}
+
 func TestRefusesWithoutRoute(t *testing.T) {
 	for name, tt := range map[string]struct {
 		action, params string
 		mutate         func(*Config)
+		status         int
+		code           string
 	}{
-		"no route header":         {"", "", nil},
-		"unknown action":          {"application_teleport", "", nil},
-		"missing path param":      {"application_confirm", `{}`, nil},
-		"path params not JSON":    {"application_confirm", `applicationId=A`, nil},
-		"path params not strings": {"application_confirm", `{"applicationId":1}`, nil},
+		"no route header":         {"", "", nil, 400, CodeNotRenderable},
+		"unknown action":          {"application_teleport", "", nil, 400, CodeNotRenderable},
+		"missing path param":      {"application_confirm", `{}`, nil, 400, CodeNotRenderable},
+		"path params not JSON":    {"application_confirm", `applicationId=A`, nil, 400, CodeNotRenderable},
+		"path params not strings": {"application_confirm", `{"applicationId":1}`, nil, 400, CodeNotRenderable},
 		"no signing key": {"application_confirm", `{"applicationId":"A"}`, func(c *Config) {
 			c.SubscriberID, c.UniqueKeyID, c.SigningPrivateKey = "", "", ""
-		}},
+		}, 500, CodeSigningDisabled},
 	} {
 		t.Run(name, func(t *testing.T) {
 			base := &fakeRT{}
@@ -396,9 +416,11 @@ func TestRefusesWithoutRoute(t *testing.T) {
 				muts = append(muts, tt.mutate)
 			}
 			rt := newWrapper(t, muts...).Wrap(base)
-			resp, err := rt.RoundTrip(internalRequest("https://np.example.com/fd/application_confirm", tt.action, tt.params, []byte(`{}`)))
-			if err == nil || !errors.Is(err, ErrNotFDRoutable) || resp != nil {
-				t.Fatalf("want ErrNotFDRoutable, got %v %v", resp, err)
+			resp, err := rt.RoundTrip(internalRequest("https://np.example.com/fd/application_confirm", tt.action, tt.params,
+				[]byte(`{"context":{"message_id":"m-1"}}`)))
+			b := expectRefusal(t, resp, err, tt.status, tt.code)
+			if string(b.Context) != `{"message_id":"m-1"}` {
+				t.Fatalf("context not echoed: %s", b.Context)
 			}
 			if base.n != 0 {
 				t.Fatal("request was sent")
@@ -444,18 +466,12 @@ func TestHostCheck(t *testing.T) {
 			if base.n != 0 {
 				t.Fatal("refused request was sent")
 			}
-			if resp.StatusCode != http.StatusBadRequest || resp.Header.Get("Content-Type") != "application/json" {
-				t.Fatalf("status %d", resp.StatusCode)
+			b := expectRefusal(t, resp, err, http.StatusBadRequest, CodeHostNotAllowed)
+			if b.Error.ObligedParty != "N-01 INVESTOR_APP" || !strings.HasPrefix(b.Error.Message, "HOST_NOT_ALLOWED: ") {
+				t.Fatalf("error %+v", b.Error)
 			}
-			var b fdwire.Body
-			data, _ := io.ReadAll(resp.Body)
-			if err := json.Unmarshal(data, &b); err != nil || b.Message.Ack.Status != "NACK" || b.Error == nil ||
-				b.Error.Code != CodeHostNotAllowed || b.Error.Class != "PROTOCOL" || b.Error.ObligedParty != "N-01 INVESTOR_APP" ||
-				!strings.HasPrefix(b.Error.Message, "HOST_NOT_ALLOWED: ") {
-				t.Fatalf("body %s", data)
-			}
-			if !bytes.Contains(data, []byte(`"context":{"action":"application_confirm","message_id":"m-1"}`)) {
-				t.Fatalf("context not echoed: %s", data)
+			if string(b.Context) != `{"action":"application_confirm","message_id":"m-1"}` {
+				t.Fatalf("context not echoed: %s", b.Context)
 			}
 		})
 	}
@@ -488,8 +504,10 @@ func TestInternalRequestPassesUnchanged(t *testing.T) {
 		"http://mock-service.evil.com:3000/x",
 	} {
 		base.n = 0
-		if _, err := rt.RoundTrip(internalRequest(target, "", "", []byte(`{}`))); !errors.Is(err, ErrNotFDRoutable) || base.n != 0 {
-			t.Fatalf("%s: treated as internal (err %v)", target, err)
+		resp, err := rt.RoundTrip(internalRequest(target, "", "", []byte(`{}`)))
+		expectRefusal(t, resp, err, http.StatusBadRequest, CodeNotRenderable)
+		if base.n != 0 {
+			t.Fatalf("%s: treated as internal", target)
 		}
 	}
 }

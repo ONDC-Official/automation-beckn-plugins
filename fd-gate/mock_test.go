@@ -53,6 +53,9 @@ func TestMockHappyPath(t *testing.T) {
 	if rec.Code != http.StatusAccepted || rec.Body.String() != npAnswer || rec.Header().Get(fdroute.HeaderUpstreamMs) != "42" {
 		t.Fatalf("answer changed: %d %s %v", rec.Code, rec.Body.String(), rec.Header())
 	}
+	if rec.Header().Get(fdroute.HeaderFdGateError) != "" {
+		t.Fatal("a participant's answer marked as the workbench's refusal")
+	}
 	if !rec.Flushed {
 		t.Fatal("not flushed")
 	}
@@ -149,7 +152,11 @@ func TestMockRejections(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tg := newMockGate(t, tt.key)
-			expectNack(t, tg.serve(mustNotRun, tt.req(t)), tt.status, tt.code)
+			rec := tg.serve(mustNotRun, tt.req(t))
+			expectNack(t, rec, tt.status, tt.code)
+			if got := rec.Header().Get(fdroute.HeaderFdGateError); got != tt.code {
+				t.Fatalf("%s = %q, want %s", fdroute.HeaderFdGateError, got, tt.code)
+			}
 		})
 	}
 }
@@ -160,6 +167,44 @@ func TestMockWithoutConfiguredKey(t *testing.T) {
 	rec := tg.serve(in, mockRequest("application_confirm", confirmMsg("m-nokey").bytes(t), "anything", `{"applicationId":"APP-1"}`))
 	if rec.Code != http.StatusOK || in.calls.Load() != 1 {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMockPassesTransportRefusalThrough(t *testing.T) {
+	// fd-transport refused to send (host check): its NACK and gate-error header reach the playground.
+	tg := newMockGate(t, "")
+	refusal := `{"message":{"ack":{"status":"NACK"}},"error":{"code":"FD-PWB-0032","class":"PROTOCOL","reason":"FIELD_CONSTRAINT_VIOLATED","message":"HOST_NOT_ALLOWED: x","obligedParty":"N-01 INVESTOR_APP","retryable":false,"fieldPath":""}}`
+	in := &inner{status: http.StatusBadRequest, body: refusal, header: map[string]string{fdroute.HeaderFdGateError: "FD-PWB-0032"}}
+	rec := tg.serve(in, mockRequest("application_confirm", confirmMsg("m-host").bytes(t), "", `{"applicationId":"APP-1"}`))
+	if rec.Code != http.StatusBadRequest || rec.Body.String() != refusal || rec.Header().Get(fdroute.HeaderFdGateError) != "FD-PWB-0032" {
+		t.Fatalf("%d %s %v", rec.Code, rec.Body.String(), rec.Header())
+	}
+}
+
+func TestMockPanicIsMarked(t *testing.T) {
+	tg := newMockGate(t, "")
+	rec := tg.serve(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }),
+		mockRequest("application_confirm", confirmMsg("m-p").bytes(t), "", `{"applicationId":"APP-1"}`))
+	expectNack(t, rec, http.StatusOK, CodeInternal)
+	if rec.Header().Get(fdroute.HeaderFdGateError) != CodeInternal {
+		t.Fatalf("headers %v", rec.Header())
+	}
+}
+
+func TestNPNeverSendsGateErrorHeader(t *testing.T) {
+	tg := newNPGate(t)
+	// fd-gate's own refusal in np mode carries no internal header...
+	rec := tg.serve(mustNotRun, npRequest(t, "POST", confirmTarget, []byte("nope"), signOpts{}))
+	expectNack(t, rec, http.StatusOK, CodeBodyMalformed)
+	if rec.Header().Get(fdroute.HeaderFdGateError) != "" {
+		t.Fatal("gate-error header sent to a participant")
+	}
+	// ...and one from the inner chain is stripped.
+	in := &inner{status: 400, body: `{"message":{"ack":{"status":"NACK"}},"error":{"code":"FD-PWB-0032","class":"PROTOCOL","message":"x","obligedParty":"N-01 INVESTOR_APP","retryable":false}}`,
+		header: map[string]string{fdroute.HeaderFdGateError: "FD-PWB-0032"}}
+	rec = tg.serve(in, npRequest(t, "POST", prefix+"/quotes", newMsg("quote_request", "INVESTOR_APP", "m-ge", nil).bytes(t), signOpts{}))
+	if rec.Code != http.StatusOK || rec.Header().Get(fdroute.HeaderFdGateError) != "" {
+		t.Fatalf("%d %v", rec.Code, rec.Header())
 	}
 }
 

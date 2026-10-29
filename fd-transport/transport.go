@@ -6,8 +6,8 @@
 // and times the participant's answer (X-Pwb-Upstream-Ms on the response).
 //
 // Requests to internal hosts (such as the mock service) pass unchanged. A request for a
-// participant that cannot be rendered or signed is refused with an error: it is never sent
-// unsigned.
+// participant that cannot be rendered, sent to its host or signed is never sent: the caller
+// gets a NACK response whose X-Pwb-Fd-Gate-Error header names the FD-PWB code.
 package fdtransport
 
 import (
@@ -42,15 +42,16 @@ const (
 // DefaultExpiresIn is the signature lifetime when expiresIn is not configured.
 const DefaultExpiresIn = 5 * time.Minute
 
-// CodeHostNotAllowed is the FD-PWB code of a refused destination (HTTP 400 to the caller).
-const CodeHostNotAllowed = "FD-PWB-0032" // HOST_NOT_ALLOWED
+// FD-PWB codes of fd-transport's refusals. A refused request is never sent: the caller gets
+// a NACK response carrying X-Pwb-Fd-Gate-Error: <code>.
+const (
+	CodeHostNotAllowed  = "FD-PWB-0032" // HOST_NOT_ALLOWED (HTTP 400): not https, or not in allowedHosts
+	CodeNotRenderable   = "FD-PWB-0033" // NOT_RENDERABLE (HTTP 400): no or unknown X-Pwb-Fd-Route, bad path parameters
+	CodeSigningDisabled = "FD-PWB-0034" // SIGNING_UNAVAILABLE (HTTP 500): no signing key configured, or signing failed
+)
 
 // SignedHeaders is the header list fd-transport signs.
 var SignedHeaders = []string{fdsig.PseudoCreated, fdsig.PseudoExpires, fdsig.HeaderDigest, fdsig.PseudoRequestTarget}
-
-// ErrNotFDRoutable is returned (wrapped) for a participant request fd-transport cannot
-// render or sign; such a request is not sent.
-var ErrNotFDRoutable = errors.New("fd-transport: request refused")
 
 // Config is fd-transport's configuration.
 type Config struct {
@@ -279,10 +280,7 @@ func (rt *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if rt.w.IsInternal(req.URL.Scheme, host) {
 		return rt.base.RoundTrip(req)
 	}
-	out, refusal, err := rt.w.prepare(req)
-	if err != nil {
-		return nil, err
-	}
+	out, refusal := rt.w.prepare(req)
 	if refusal != nil {
 		return refusal, nil
 	}
@@ -299,37 +297,41 @@ func (rt *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // prepare renders, checks and signs a participant request. It consumes and closes
-// req.Body; the caller's request is otherwise untouched. A refused destination yields a
-// 400 NACK response instead of a request.
-func (w *Wrapper) prepare(req *http.Request) (*http.Request, *http.Response, error) {
+// req.Body; the caller's request is otherwise untouched. A request that cannot be rendered,
+// sent to its host or signed yields a NACK response (with X-Pwb-Fd-Gate-Error) instead.
+func (w *Wrapper) prepare(req *http.Request) (*http.Request, *http.Response) {
 	body, err := readAndClose(req.Body)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: read body: %v", ErrNotFDRoutable, err)
+	party := fdwire.Party(fdroute.RoleInvestorApp)
+	refuse := func(status int, code, name, format string, args ...any) (*http.Request, *http.Response) {
+		return nil, refusal(req, body, status, code, party, name+": "+fmt.Sprintf(format, args...))
 	}
-	refuse := func(format string, args ...any) (*http.Request, *http.Response, error) {
-		return nil, nil, fmt.Errorf("%w: %s %s: %s", ErrNotFDRoutable, req.Method, req.URL.Redacted(), fmt.Sprintf(format, args...))
+	if err != nil {
+		return refuse(http.StatusInternalServerError, CodeNotRenderable, "NOT_RENDERABLE", "cannot read the body: %v", err)
 	}
 
 	action := strings.TrimSpace(req.Header.Get(fdroute.HeaderFdRoute))
 	if action == "" {
-		return refuse("no %s header; a request for a participant is never sent unrendered or unsigned", fdroute.HeaderFdRoute)
+		return refuse(http.StatusBadRequest, CodeNotRenderable, "NOT_RENDERABLE",
+			"%s %s has no %s header; a request for a participant is never sent unrendered or unsigned", req.Method, req.URL.Redacted(), fdroute.HeaderFdRoute)
 	}
 	route, ok := w.table.ByAction(action)
 	if !ok {
-		return refuse("%s %q is not an FD %s action", fdroute.HeaderFdRoute, action, w.table.Version)
+		return refuse(http.StatusBadRequest, CodeNotRenderable, "NOT_RENDERABLE", "%s %q is not an FD %s action", fdroute.HeaderFdRoute, action, w.table.Version)
 	}
+	party = fdwire.Party(route.Caller)
 	if !w.CanSign() {
-		return refuse("no signing key (subscriberId/uniqueKeyId/signingPrivateKey or env %s/%s/%s)", EnvSubscriberID, EnvUniqueKeyID, EnvSigningPrivate)
+		return refuse(http.StatusInternalServerError, CodeSigningDisabled, "SIGNING_UNAVAILABLE",
+			"no signing key is configured (subscriberId/uniqueKeyId/signingPrivateKey or env %s/%s/%s)", EnvSubscriberID, EnvUniqueKeyID, EnvSigningPrivate)
 	}
 	params := map[string]string{}
 	if raw := strings.TrimSpace(req.Header.Get(fdroute.HeaderFdPathParams)); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &params); err != nil || params == nil {
-			return refuse("%s is not a JSON object of strings: %s", fdroute.HeaderFdPathParams, raw)
+			return refuse(http.StatusBadRequest, CodeNotRenderable, "NOT_RENDERABLE", "%s is not a JSON object of strings: %s", fdroute.HeaderFdPathParams, raw)
 		}
 	}
 	restPath, err := route.RenderPath(params)
 	if err != nil {
-		return refuse("%v", err)
+		return refuse(http.StatusBadRequest, CodeNotRenderable, "NOT_RENDERABLE", "%v", err)
 	}
 
 	// The router's target is <subscriber_url>/<action>: the base is what precedes /<action>.
@@ -345,19 +347,10 @@ func (w *Wrapper) prepare(req *http.Request) (*http.Request, *http.Response, err
 	}
 	target, err := url.Parse(raw)
 	if err != nil {
-		return refuse("cannot build the participant URL %q: %v", raw, err)
+		return refuse(http.StatusBadRequest, CodeNotRenderable, "NOT_RENDERABLE", "cannot build the participant URL %q: %v", raw, err)
 	}
-
 	if msg := w.checkHost(target); msg != "" {
-		nack := fdwire.NackBody(contextOf(body), fdwire.WorkbenchError(CodeHostNotAllowed,
-			"HOST_NOT_ALLOWED: "+msg, fdwire.Party(route.Caller), ""))
-		return nil, &http.Response{
-			Status: "400 Bad Request", StatusCode: http.StatusBadRequest,
-			Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
-			Header:        http.Header{"Content-Type": {"application/json"}},
-			Body:          io.NopCloser(bytes.NewReader(nack)),
-			ContentLength: int64(len(nack)), Request: req,
-		}, nil
+		return refuse(http.StatusBadRequest, CodeHostNotAllowed, "HOST_NOT_ALLOWED", "%s", msg)
 	}
 
 	out := req.Clone(req.Context())
@@ -392,18 +385,35 @@ func (w *Wrapper) prepare(req *http.Request) (*http.Request, *http.Response, err
 		Method: out.Method, RequestTarget: target.RequestURI(), Created: created, Expires: expires, Body: sent,
 	})
 	if err != nil {
-		return refuse("signing string: %v", err)
+		return refuse(http.StatusInternalServerError, CodeSigningDisabled, "SIGNING_UNAVAILABLE", "signing string: %v", err)
 	}
 	sig, err := fdsig.Sign(ss, w.privateKey)
 	if err != nil {
-		return refuse("sign: %v", err)
+		return refuse(http.StatusInternalServerError, CodeSigningDisabled, "SIGNING_UNAVAILABLE", "sign: %v", err)
 	}
 	out.Header.Set("Authorization", (&fdsig.Authorization{
 		KeyID: w.keyID, Algorithm: "ed25519", Created: created, Expires: expires,
 		Headers: SignedHeaders, Signature: sig,
 	}).String())
 	out.Header.Set("Digest", fdsig.Digest(sent))
-	return out, nil, nil
+	return out, nil
+}
+
+// refusal is the NACK response for a request fd-transport will not send. It echoes the
+// internal body's context and names the code in X-Pwb-Fd-Gate-Error, so the playground can
+// tell the workbench's refusal from a participant's answer.
+func refusal(req *http.Request, body []byte, status int, code, party, message string) *http.Response {
+	nack := fdwire.NackBody(contextOf(body), fdwire.WorkbenchError(code, message, party, ""))
+	return &http.Response{
+		Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), StatusCode: status,
+		Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
+		Header: http.Header{
+			"Content-Type": {"application/json"},
+			http.CanonicalHeaderKey(fdroute.HeaderFdGateError): {code},
+		},
+		Body:          io.NopCloser(bytes.NewReader(nack)),
+		ContentLength: int64(len(nack)), Request: req,
+	}
 }
 
 // checkHost returns why target may not be called, or "".

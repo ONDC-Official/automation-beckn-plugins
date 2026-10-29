@@ -48,6 +48,7 @@ const (
 	HeaderFdMethod     = "X-Pwb-Fd-Method"      // the REST method as sent
 	HeaderFdPath       = "X-Pwb-Fd-Path"        // the REST path (and query) as sent, without the module prefix
 	HeaderFdReplay     = "X-Pwb-Fd-Replay"      // "1" when the playground re-sends a stored message
+	HeaderFdGateError  = "X-Pwb-Fd-Gate-Error"  // on a response: the FD-PWB code of the workbench's own refusal (internal hops only)
 	HeaderFdEnvelope   = "X-Pwb-Fd-Envelope"
 	HeaderUpstreamMs   = "X-Pwb-Upstream-Ms" // participant response time in ms, set by fd-transport
 	HeaderInternalKey  = "X-Pwb-Internal-Key"
