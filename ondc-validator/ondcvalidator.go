@@ -52,7 +52,7 @@ func (v *ondcValidator) ValidatePayload(ctx context.Context, url *url.URL, paylo
 		OnlyInvalid:          true,
 		HideParentErrors:     true,
 		UniqueKey:            &uniqueKey,
-		Store:                v.storage,
+		Store:                v.storageFor(env),
 	}, validationutils.ExternalData{})
 
 	log.Infof(ctx, "L1 validation completed with error count: %#+v", len(result))
@@ -98,13 +98,13 @@ func (v *ondcValidator) ValidatePayload(ctx context.Context, url *url.URL, paylo
 }
 
 func (v *ondcValidator) SaveValidationData(ctx context.Context, url *url.URL, payload []byte) error {
-	payloadData, uniqueKey, _, err := convertToPayload(payload)
+	payloadData, uniqueKey, env, err := convertToPayload(payload)
 	if err != nil {
 		return fmt.Errorf("invalid payload: %w", err)
 	}
 	endpoint := path.Base(url.Path)
 	storeConfig := storageutils.DefaultStorageConfig()
-	return validationpkg.PerformL1validationsSave(endpoint, uniqueKey, payloadData, v.storage, &storeConfig)
+	return validationpkg.PerformL1validationsSave(endpoint, uniqueKey, payloadData, v.storageFor(env), &storeConfig)
 }
 
 func New(ctx context.Context, cache definition.Cache, config *Config) (definition.OndcValidator, func() error, error) {
