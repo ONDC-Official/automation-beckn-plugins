@@ -1,0 +1,22 @@
+# The same table, still wrapped in its build.yaml key.
+x-fd-routes:
+  formatVersion: 1
+  domain: ONDC:FIS14:FD
+  version: 0.1.4
+  tableHash: 9584937ce11f12d3bb38a9e7d30ac81d29918aec87b87bce5f8488b7241484d7
+  routes:
+    - action: deposit_events_read
+      kind: request
+      method: GET
+      path: /deposits/{depositId}/events
+      pathParams: [depositId]
+      mode: SYNC
+      caller: INVESTOR_APP
+      callee: DEPOSIT_ISSUER
+      callback: null
+      inReplyTo: null
+      hasBody: false
+      versionGuard: null
+      sla: "P95 ≤ 2s"
+      requirements: [FD-LCY-01]
+      operationId: readDepositEvents
