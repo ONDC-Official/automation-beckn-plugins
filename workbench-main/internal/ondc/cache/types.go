@@ -43,6 +43,11 @@ type ApiData struct {
 	Timestamp     string `json:"timestamp"`
 	RealTimestamp string `json:"realTimestamp"`
 	TTL           *int64 `json:"ttl,omitempty"`
+	// FD (ONDC:FIS14:FD) only; omitempty keeps the JSON of Beckn entries unchanged.
+	// InReplyTo is a callback's fdEnvelope.inReplyTo: the message_id of the request it answers.
+	InReplyTo string `json:"inReplyTo,omitempty"`
+	// FdReplay marks a byte-identical re-send of a message already in the transaction.
+	FdReplay bool `json:"fdReplay,omitempty"`
 }
 
 type FormApiType struct {
