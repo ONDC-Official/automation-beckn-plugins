@@ -158,6 +158,9 @@ func (w *ondcWorkbench) receive(ctx context.Context, request *http.Request, body
 
 // WorkbenchValidateContext
 func (w *ondcWorkbench) WorkbenchValidateContext(ctx context.Context, request *http.Request, body []byte) error {
+	if isFD(w.Config) {
+		return payloadutils.AsWorkbenchError(w.validateFDContext(ctx, request, body))
+	}
 	return payloadutils.AsWorkbenchError(w.validateContext(ctx, request, body))
 }
 
