@@ -9,8 +9,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 type memCache struct{ m map[string]string }
@@ -243,5 +246,29 @@ func TestBecknValidationCookiesUnchanged(t *testing.T) {
 	got := receiveCookies(t, wb, req, contextBody(t, map[string]any{"domain": "ONDC:RET10", "core_version": "1.2.5", "action": "search"}, nil))
 	if got["header_validation"] != "false" || got["protocol_validation"] != "false" {
 		t.Fatalf("header_validation=%q protocol_validation=%q, want the session's false", got["header_validation"], got["protocol_validation"])
+	}
+}
+
+// New wires the receiver's FD branch for FD only.
+func TestExpiredExpectationThroughWorkbench(t *testing.T) {
+	expired := `{"activeSessions":[{"sessionId":"s1","flowId":"f1","expectedAction":"%s","expireAt":"` +
+		time.Now().Add(-time.Minute).UTC().Format(time.RFC3339) + `"}]}`
+	tests := []struct {
+		domain, version, action, props, wantCode string
+	}{
+		{domain: "ONDC:FIS14:FD", version: "0.1.4", action: "application_create", props: fdPropertiesYAML, wantCode: "EXPECTATION_EXPIRED"},
+		{domain: "ONDC:RET10", version: "1.2.5", action: "search", props: becknPropertiesYAML, wantCode: "412"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.domain, func(t *testing.T) {
+			wb, cache := newTestWorkbench(t, tt.domain, tt.version, "receiver", tt.props)
+			cache.m["https://wb.example/investor-app"] = strings.Replace(expired, "%s", tt.action, 1)
+			body := contextBody(t, map[string]any{"domain": tt.domain, "version": tt.version, "action": tt.action}, nil)
+			err := wb.WorkbenchReceiver(context.Background(), httptest.NewRequest(http.MethodPost, "/"+tt.action, nil), body)
+			var wbErr *model.WorkbenchErr
+			if !errors.As(err, &wbErr) || wbErr.Err.Code != tt.wantCode {
+				t.Fatalf("WorkbenchReceiver() error = %v, want code %s", err, tt.wantCode)
+			}
+		})
 	}
 }

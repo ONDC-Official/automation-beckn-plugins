@@ -19,6 +19,7 @@ type WorkbenchRequestReceiver struct {
 	transactionCache transactioncache.Service
 	subscriberCache  subscribercache.Service
 	sessionCache     sessioncache.Service
+	fd               bool // FD (ONDC:FIS14:FD) branches on; see EnableFD
 }
 
 func NewWorkbenchRequestReceiver(txnCache transactioncache.Service, subCache subscribercache.Service, sessCache sessioncache.Service) *WorkbenchRequestReceiver {
@@ -43,8 +44,12 @@ func (r *WorkbenchRequestReceiver) ReceiveFromNP(ctx context.Context, requestDat
 		ctx, requestData.SubscriberURL,
 	)
 	if subscriberData != nil {
+		expectations := subscriberData.ActiveSessions
 		err := r.tryFulfillExpectation(ctx, subscriberData, requestData)
 		if err != nil {
+			return err
+		}
+		if err := r.fdExpectationExpired(ctx, expectations, requestData); err != nil {
 			return err
 		}
 	}

@@ -73,6 +73,9 @@ func New(ctx context.Context, cache definition.Cache, config *Config) (definitio
 		Cache: cache,
 	}
 	rcv := receiver.NewWorkbenchRequestReceiver(*txnCache, *subscriberCache, *sessionCache)
+	if isFD(config) {
+		rcv.EnableFD()
+	}
 
 	contextValidator := contextvalidatotors.NewContextValidator(txnCache, transactionProperties)
 
