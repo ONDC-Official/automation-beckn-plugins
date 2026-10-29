@@ -17,6 +17,8 @@ type Resolution struct {
 	OriginalRequestURI string
 	CallerSubscriberID string
 	CallerUniqueKeyID  string
+	// Replay is true when the playground re-sends a stored message (X-Pwb-Fd-Replay: 1).
+	Replay bool
 }
 
 type resolutionKey struct{}
@@ -41,10 +43,13 @@ func FromContext(ctx context.Context) *Resolution {
 const (
 	InternalHeaderPrefix = "X-Pwb-"
 
-	HeaderFdRoute      = "X-Pwb-Fd-Route"
-	HeaderFdPathParams = "X-Pwb-Fd-Path-Params"
+	HeaderFdRoute      = "X-Pwb-Fd-Route"       // the resolved action
+	HeaderFdPathParams = "X-Pwb-Fd-Path-Params" // JSON object of path parameters
+	HeaderFdMethod     = "X-Pwb-Fd-Method"      // the REST method as sent
+	HeaderFdPath       = "X-Pwb-Fd-Path"        // the REST path (and query) as sent, without the module prefix
+	HeaderFdReplay     = "X-Pwb-Fd-Replay"      // "1" when the playground re-sends a stored message
 	HeaderFdEnvelope   = "X-Pwb-Fd-Envelope"
-	HeaderUpstreamMs   = "X-Pwb-Upstream-Ms"
+	HeaderUpstreamMs   = "X-Pwb-Upstream-Ms" // participant response time in ms, set by fd-transport
 	HeaderInternalKey  = "X-Pwb-Internal-Key"
 )
 

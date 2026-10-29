@@ -373,3 +373,31 @@ func TestResolutionContext(t *testing.T) {
 		t.Fatal("foreign key collided")
 	}
 }
+
+func TestRenderPath(t *testing.T) {
+	tests := []struct {
+		route  Route
+		params map[string]string
+		want   string
+	}{
+		{Route{Action: "deposit_events_read", Path: "/deposits/{depositId}/events"}, map[string]string{"depositId": "D-1"}, "/deposits/D-1/events"},
+		{Route{Action: "deposit_events_read", Path: "/deposits/{depositId}/events"}, map[string]string{"depositId": "D/1 x"}, "/deposits/D%2F1%20x/events"},
+		{Route{Action: "on_application_confirm", Path: "/on_application_confirm"}, nil, "/on_application_confirm"},
+		{Route{Action: "a", Path: "/x/{a}/{b}"}, map[string]string{"a": "1", "b": "2", "extra": "3"}, "/x/1/2"},
+	}
+	for _, tt := range tests {
+		got, err := tt.route.RenderPath(tt.params)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.route.Path, err)
+		}
+		if got != tt.want {
+			t.Fatalf("%s: got %s want %s", tt.route.Path, got, tt.want)
+		}
+	}
+	for _, params := range []map[string]string{nil, {"depositId": ""}} {
+		r := Route{Action: "deposit_read", Path: "/deposits/{depositId}"}
+		if _, err := r.RenderPath(params); err == nil || !strings.Contains(err.Error(), "depositId") {
+			t.Fatalf("want missing-parameter error for %v, got %v", params, err)
+		}
+	}
+}

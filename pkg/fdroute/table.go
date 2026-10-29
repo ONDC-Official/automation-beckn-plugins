@@ -209,6 +209,34 @@ func (t *Table) Match(method, path string) (*Route, map[string]string, error) {
 	return nil, nil, &NoRouteError{Method: method, Path: path, Allowed: allowed}
 }
 
+// RenderPath fills the route's path template with params and returns the escaped path,
+// relative to the callee's base URL. Every template parameter must have a non-empty value;
+// values are percent-escaped as one path segment each. For a callback or webhook the
+// template is "/<action>", so the result is that path.
+func (r *Route) RenderPath(params map[string]string) (string, error) {
+	segs, err := parseTemplate(r.Path)
+	if err != nil {
+		return "", fmt.Errorf("fdroute: route %s: %w", r.Action, err)
+	}
+	var b strings.Builder
+	for _, s := range segs {
+		b.WriteByte('/')
+		if !s.param {
+			b.WriteString(url.PathEscape(s.value))
+			continue
+		}
+		v := params[s.value]
+		if v == "" {
+			return "", fmt.Errorf("fdroute: route %s: path parameter %s is missing", r.Action, s.value)
+		}
+		b.WriteString(url.PathEscape(v))
+	}
+	if b.Len() == 0 {
+		return "/", nil
+	}
+	return b.String(), nil
+}
+
 var actionRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 var (
