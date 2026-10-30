@@ -339,3 +339,33 @@ func TestNPSignatureUsesKeyCache(t *testing.T) {
 		t.Fatalf("lookups %d, calls %d", tg.keys.calls.Load(), in.calls.Load())
 	}
 }
+
+func TestMockKeepsScenarioDirectives(t *testing.T) {
+	tg := newMockGate(t, "s3cret")
+	in := &inner{status: http.StatusOK, body: `{"message":{"ack":{"status":"ACK"}}}`}
+	m := confirmMsg("m-scn")
+	m.ctx()["bap_uri"] = "http://localhost:3000/cb"
+	req := mockRequest("application_confirm", m.bytes(t), "s3cret", `{"applicationId":"APP-1"}`)
+	req.Header.Set(fdroute.HeaderFdScenario, `{"expectError":"FD-PRODUCT-0007"}`)
+	tg.serve(in, req)
+	if got := in.seen().header.Get(fdroute.HeaderFdScenario); got != `{"expectError":"FD-PRODUCT-0007"}` {
+		t.Fatalf("scenario header = %q", got)
+	}
+
+	// Not JSON, or too long: dropped.
+	for _, bad := range []string{"not json", `{"x":"` + strings.Repeat("a", maxScenarioHeader) + `"}`} {
+		in := &inner{status: http.StatusOK, body: `{"message":{"ack":{"status":"ACK"}}}`}
+		req := mockRequest("application_confirm", confirmMsgWithURI(t, "m-scn-bad"), "s3cret", `{"applicationId":"APP-1"}`)
+		req.Header.Set(fdroute.HeaderFdScenario, bad)
+		tg.serve(in, req)
+		if got := in.seen().header.Get(fdroute.HeaderFdScenario); got != "" {
+			t.Fatalf("kept %q", got)
+		}
+	}
+}
+
+func confirmMsgWithURI(t *testing.T, messageID string) []byte {
+	m := confirmMsg(messageID)
+	m.ctx()["bap_uri"] = "http://localhost:3000/cb"
+	return m.bytes(t)
+}

@@ -49,6 +49,7 @@ const (
 	HeaderFdPath       = "X-Pwb-Fd-Path"        // the REST path (and query) as sent, without the module prefix
 	HeaderFdReplay     = "X-Pwb-Fd-Replay"      // "1" when the playground re-sends a stored message
 	HeaderFdOrigin     = "X-Pwb-Fd-Origin"      // who sent the message: OriginNP or OriginWorkbench
+	HeaderFdScenario   = "X-Pwb-Fd-Scenario"    // the playground's scenario directives for a deliberate deviation (JSON), kept for the recorder
 	HeaderFdGateError  = "X-Pwb-Fd-Gate-Error"  // on a response: the FD-PWB code of the workbench's own refusal (internal hops only)
 	HeaderFdEnvelope   = "X-Pwb-Fd-Envelope"
 	HeaderUpstreamMs   = "X-Pwb-Upstream-Ms" // participant response time in ms, set by fd-transport

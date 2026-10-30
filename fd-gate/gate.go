@@ -350,6 +350,9 @@ func (g *Gate) translate(r *http.Request, route *fdroute.Route, params map[strin
 	return r.WithContext(fdroute.WithResolution(r.Context(), res))
 }
 
+// maxScenarioHeader bounds the X-Pwb-Fd-Scenario value fd-gate keeps.
+const maxScenarioHeader = 2048
+
 // serveMock handles the playground's call (§3, mock mode).
 func (g *Gate) serveMock(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	ctx := r.Context()
@@ -357,6 +360,7 @@ func (g *Gate) serveMock(w http.ResponseWriter, r *http.Request, next http.Handl
 	key := r.Header.Get(fdroute.HeaderInternalKey)
 	rawParams := strings.TrimSpace(r.Header.Get(fdroute.HeaderFdPathParams))
 	replay := strings.TrimSpace(r.Header.Get(fdroute.HeaderFdReplay)) == "1"
+	scenario := strings.TrimSpace(r.Header.Get(fdroute.HeaderFdScenario))
 	stripInbound(r.Header)
 
 	if g.cfg.InternalKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(g.cfg.InternalKey)) != 1 {
@@ -423,6 +427,11 @@ func (g *Gate) serveMock(w http.ResponseWriter, r *http.Request, next http.Handl
 	r.Header.Set(fdroute.HeaderFdMethod, route.Method)
 	r.Header.Set(fdroute.HeaderFdPath, restPath)
 	r.Header.Set(fdroute.HeaderFdOrigin, fdroute.OriginWorkbench)
+	// A deliberate deviation (a scenario's forced refusal, an old snapshot) is recorded with
+	// its directives, so the report does not count it against the participant.
+	if scenario != "" && len(scenario) <= maxScenarioHeader && json.Valid([]byte(scenario)) {
+		r.Header.Set(fdroute.HeaderFdScenario, scenario)
+	}
 	if replay {
 		r.Header.Set(fdroute.HeaderFdReplay, "1")
 	}
