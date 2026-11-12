@@ -55,14 +55,9 @@ func ValidateAndExtractPayload(ctx context.Context,body []byte,txnProperties api
 
 func GetRequestData(payload apiservice.PayloadEnvelope, moduleType apiservice.ModuleType, moduleRole apiservice.ModuleRole, URL url.URL) (apiservice.RequestOwner, string,string,string, error) {
 	if(moduleType == apiservice.Caller){
-		action := payload.Context.Action
-		if(strings.HasPrefix(action,"on_")) {
-			moduleRole = apiservice.BPP
-		}else{
-			moduleRole = apiservice.BAP
-		}
+		moduleRole = callerRole(payload, URL)
 	}
-	
+
 	// Create a composite key for switch
 	key := fmt.Sprintf("%s-%s", moduleType, moduleRole)
 	
@@ -117,6 +112,36 @@ func GetRequestData(payload apiservice.PayloadEnvelope, moduleType apiservice.Mo
 	}
 	
 	return owner, subscriberURI, subscriberID,string(moduleRole), nil
+}
+
+// callerRole is the role the mock plays when it sends this payload. The mock sends the
+// participant's URL as the subscriber_url query param, so the participant is whichever
+// side of the context carries that URL and the mock is the other side. This keeps a
+// request the seller sends (an RSF recon owned by the BPP) going to bap_uri, and a
+// callback the buyer sends (its on_recon) going to bpp_uri.
+// Without a match (search has no bpp_uri, a caller may send no subscriber_url, or both
+// uris are the same) the beckn convention decides: on_* comes from the BPP, the rest
+// from the BAP.
+func callerRole(payload apiservice.PayloadEnvelope, URL url.URL) apiservice.ModuleRole {
+	participantURL := URL.Query().Get("subscriber_url")
+	bapURI, bppURI := payload.Context.BapURI, payload.Context.BppURI
+	if participantURL != "" && !sameURL(bapURI, bppURI) {
+		if sameURL(participantURL, bapURI) {
+			return apiservice.BPP
+		}
+		if sameURL(participantURL, bppURI) {
+			return apiservice.BAP
+		}
+	}
+	if strings.HasPrefix(payload.Context.Action, "on_") {
+		return apiservice.BPP
+	}
+	return apiservice.BAP
+}
+
+// sameURL compares two subscriber urls, ignoring a trailing slash.
+func sameURL(a, b string) bool {
+	return a != "" && strings.TrimSuffix(a, "/") == strings.TrimSuffix(b, "/")
 }
 
 // WorkbenchErrorPrefix tags every NACK/error message sent by the workbench so the
