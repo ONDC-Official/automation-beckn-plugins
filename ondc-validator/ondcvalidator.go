@@ -29,33 +29,33 @@ type payloadEnvelope struct {
 
 type Config struct {
 	StateFullValidations bool `json:"stateFullValidations" yaml:"stateFullValidations"`
-	DebugMode bool `json:"debugMode" yaml:"debugMode"`
+	DebugMode            bool `json:"debugMode" yaml:"debugMode"`
 }
 
 type ondcValidator struct {
-	config *Config
-	cache  definition.Cache
+	config  *Config
+	cache   definition.Cache
 	storage validationutils.StorageInterface
 }
 
 func (v *ondcValidator) ValidatePayload(ctx context.Context, url *url.URL, payload []byte) error {
-	log.Infof(ctx,"Starting L1 validation for URL: %s", url.String())
+	log.Infof(ctx, "Starting L1 validation for URL: %s", url.String())
 	payloadData, uniqueKey, env, err := convertToPayload(payload)
 	if err != nil {
 		return fmt.Errorf("invalid payload: %w", err)
 	}
 	// endpoint := path.Base(url.String())
 	endpoint := path.Base(url.Path)
-	result,err := validationpkg.PerformL1validations(endpoint, payloadData, &validationutils.ValidationConfig{
+	result, err := validationpkg.PerformL1validations(endpoint, payloadData, &validationutils.ValidationConfig{
 		StateFullValidations: v.config.StateFullValidations,
-		Debug: 			  v.config.DebugMode,
-		OnlyInvalid: true,
-		HideParentErrors: true,
-		UniqueKey: &uniqueKey,
-		Store:    v.storage,
+		Debug:                v.config.DebugMode,
+		OnlyInvalid:          true,
+		HideParentErrors:     true,
+		UniqueKey:            &uniqueKey,
+		Store:                v.storageFor(env),
 	}, validationutils.ExternalData{})
 
-	log.Infof(ctx,"L1 validation completed with error count: %#+v", len(result))
+	log.Infof(ctx, "L1 validation completed with error count: %#+v", len(result))
 
 	if err != nil {
 		return fmt.Errorf("validation error: %w", err)
@@ -63,17 +63,17 @@ func (v *ondcValidator) ValidatePayload(ctx context.Context, url *url.URL, paylo
 
 	if len(result) > 0 {
 
-		if(result[0].Valid){
-			log.Infof(ctx,"L1 validation successful for URL: %s", url.String())
+		if result[0].Valid {
+			log.Infof(ctx, "L1 validation successful for URL: %s", url.String())
 			return nil
 		}
 
 		var ondcErrors []model.Error
 		for _, res := range result {
 			ondcErrors = append(ondcErrors, model.Error{
-				Code:        strconv.Itoa(res.Code),
-				Message:     res.Description,
-				Paths: "",
+				Code:    strconv.Itoa(res.Code),
+				Message: res.Description,
+				Paths:   "",
 			})
 		}
 
@@ -93,18 +93,18 @@ func (v *ondcValidator) ValidatePayload(ctx context.Context, url *url.URL, paylo
 		})
 		return &model.SchemaValidationErr{Errors: ondcErrors}
 	}
-	log.Infof(ctx,"L1 validation successful for URL: %s", url.String())
+	log.Infof(ctx, "L1 validation successful for URL: %s", url.String())
 	return nil
 }
 
 func (v *ondcValidator) SaveValidationData(ctx context.Context, url *url.URL, payload []byte) error {
-	payloadData, uniqueKey, _, err := convertToPayload(payload)
+	payloadData, uniqueKey, env, err := convertToPayload(payload)
 	if err != nil {
 		return fmt.Errorf("invalid payload: %w", err)
 	}
 	endpoint := path.Base(url.Path)
 	storeConfig := storageutils.DefaultStorageConfig()
-	return validationpkg.PerformL1validationsSave(endpoint, uniqueKey, payloadData, v.storage, &storeConfig)
+	return validationpkg.PerformL1validationsSave(endpoint, uniqueKey, payloadData, v.storageFor(env), &storeConfig)
 }
 
 func New(ctx context.Context, cache definition.Cache, config *Config) (definition.OndcValidator, func() error, error) {
@@ -112,8 +112,8 @@ func New(ctx context.Context, cache definition.Cache, config *Config) (definitio
 		return nil, nil, fmt.Errorf("config cannot be nil")
 	}
 	v := &ondcValidator{
-		config: config,
-		cache:  cache,
+		config:  config,
+		cache:   cache,
 		storage: &cacheWrapper{cache: cache},
 	}
 	return v, nil, nil
@@ -125,24 +125,23 @@ func New(ctx context.Context, cache definition.Cache, config *Config) (definitio
 // 3) parsed envelope (context fields)
 // 4) error
 func convertToPayload(data []byte) (interface{}, string, payloadEnvelope, error) {
-    // Full object for JSONPath validations
-    var payloadObj interface{}
-    if err := json.Unmarshal(data, &payloadObj); err != nil {
-        return nil, "", payloadEnvelope{}, fmt.Errorf("failed to parse JSON payload: %w", err)
-    }
+	// Full object for JSONPath validations
+	var payloadObj interface{}
+	if err := json.Unmarshal(data, &payloadObj); err != nil {
+		return nil, "", payloadEnvelope{}, fmt.Errorf("failed to parse JSON payload: %w", err)
+	}
 
-    // Minimal typed parse for transaction_id
-    var env payloadEnvelope
-    if err := json.Unmarshal(data, &env); err != nil {
-        return nil, "", payloadEnvelope{}, fmt.Errorf("failed to parse payload envelope: %w", err)
-    }
-    if env.Context.TransactionID == "" {
-        return nil, "", payloadEnvelope{}, fmt.Errorf("transaction_id is missing in context")
-    }
+	// Minimal typed parse for transaction_id
+	var env payloadEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, "", payloadEnvelope{}, fmt.Errorf("failed to parse payload envelope: %w", err)
+	}
+	if env.Context.TransactionID == "" {
+		return nil, "", payloadEnvelope{}, fmt.Errorf("transaction_id is missing in context")
+	}
 
-    return payloadObj, env.Context.TransactionID, env, nil
+	return payloadObj, env.Context.TransactionID, env, nil
 }
-
 
 type cacheWrapper struct {
 	cache definition.Cache
@@ -150,7 +149,7 @@ type cacheWrapper struct {
 
 func (c *cacheWrapper) SaveKey(uniquePrefix string, key string, value string) error {
 	fullKey := fmt.Sprintf("%s:%s", uniquePrefix, key)
-	return c.cache.Set(context.Background(), fullKey, value, 60 * 5)
+	return c.cache.Set(context.Background(), fullKey, value, 60*5)
 }
 
 func (c *cacheWrapper) GetKey(uniquePrefix string, key string) (string, error) {
