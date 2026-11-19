@@ -140,6 +140,9 @@ func (w *ondcWorkbench) receive(ctx context.Context, request *http.Request,body 
 				mockURL = fmt.Sprintf("%s/%s/%s/manual",w.Config.MockServiceURL,w.Config.ProtocolDomain,w.Config.ProtocolVersion)
 			}
 		}
+		if(w.Config.ModuleType == string(apiservice.Receiver)){
+			mockURL = withSubscriberURL(mockURL, workbenchRequestData.SubscriberURL)
+		}
 		workbenchRequestData.MockURL = mockURL
 		err:= setRequestCookies(workbenchRequestData)
 		if(err != nil){
