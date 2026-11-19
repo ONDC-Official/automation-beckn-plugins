@@ -36,6 +36,26 @@ func validateConfig(config *Config) error {
 	return nil
 }
 
+// withSubscriberURL tells the mock whose payload it is forwarded: the participant this
+// receiver resolved from the side that received the call. The mock can't tell from the
+// context alone when a request comes from the seller (an RSF recon owned by the BPP) or a
+// callback from the buyer (its on_recon); by the on_ prefix it would pick the sender's
+// own session in a workbench-to-workbench run. The router keeps the query when it appends
+// the action to this url.
+func withSubscriberURL(mockURL, subscriberURL string) string {
+	if subscriberURL == "" {
+		return mockURL
+	}
+	u, err := url.Parse(mockURL)
+	if err != nil {
+		return mockURL
+	}
+	q := u.Query()
+	q.Set("subscriber_url", subscriberURL)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 func setRequestCookies(requestData *apiservice.WorkbenchRequestData) error {
 	httpReq := requestData.Request
 	
