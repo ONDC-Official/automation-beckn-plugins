@@ -22,19 +22,31 @@ import (
 const (
 	cookieSubscriberURL   = "subscriber_url"
 	cookieRequestOwner    = "request_owner"
+	cookieUseCare         = "use_care"
 	cookieForwardRequest  = "forward_request"
 	cookieWorkbenchErrMsg = "workbench_error_message"
 )
 
+// careEndpoints are the IGM endpoints the router sends to CARE_URL when use_care is on.
+// Keep in sync with careEndpoints in router/router.go.
+var careEndpoints = map[string]bool{
+	"issue":           true,
+	"on_issue":        true,
+	"issue_status":    true,
+	"on_issue_status": true,
+}
+
 type Validator struct {
 	transactioncache *transactioncache.Service
 	properties       apiservice.TransactionProperties
+	moduleType       apiservice.ModuleType
 }
 
-func NewContextValidator(txnCache *transactioncache.Service, props apiservice.TransactionProperties) *Validator {
+func NewContextValidator(txnCache *transactioncache.Service, props apiservice.TransactionProperties, moduleType apiservice.ModuleType) *Validator {
 	return &Validator{
 		transactioncache: txnCache,
 		properties:       props,
+		moduleType:       moduleType,
 	}
 }
 
@@ -65,7 +77,13 @@ func (cv *Validator) ValidateContext(ctx context.Context, httpRequest *http.Requ
 		return err
 	}
 
-	result := cv.validateAsyncContext(ctx, payload, transactionData, requestOwner.Value)
+	// Optional: a missing use_care cookie means care is off.
+	useCare := false
+	if c, err := httpRequest.Cookie(cookieUseCare); err == nil {
+		useCare = c.Value == "true"
+	}
+
+	result := cv.validateAsyncContext(ctx, payload, transactionData, requestOwner.Value, useCare)
 	setForwardRequestCookie(httpRequest, result.ForwardRequest, result.Error)
 
 	if result.Valid {
@@ -104,7 +122,7 @@ type contextValidationResult struct {
 	ForwardRequest bool
 }
 
-func (cv *Validator) validateAsyncContext(ctx context.Context, payload apiservice.PayloadEnvelope, transactionData *cache.TransactionCache, requestOwner string) contextValidationResult {
+func (cv *Validator) validateAsyncContext(ctx context.Context, payload apiservice.PayloadEnvelope, transactionData *cache.TransactionCache, requestOwner string, useCare bool) contextValidationResult {
 	log.Infof(ctx, "Validating Transaction History for action: %s", payload.Context.Action)
 
 	apiEntries := apiDataFromTransaction(transactionData)
@@ -130,7 +148,13 @@ func (cv *Validator) validateAsyncContext(ctx context.Context, payload apiservic
 	// must not appear anywhere in the history. Callbacks on the sync path are skipped
 	// as they legitimately share the message_id of the request they answer.
 	if !strings.HasPrefix(subjectAction, "on_") {
-		if result := validateUniqueMessageId(ctx, payload.Context.MessageID, sortedContexts, nil); !result.Valid {
+		var result contextValidationResult
+		if cv.isCareRelay(subjectAction, useCare) {
+			result = validateCareRelayMessageId(ctx, payload.Context.MessageID, subjectAction, sortedContexts)
+		} else {
+			result = validateUniqueMessageId(ctx, payload.Context.MessageID, sortedContexts, nil)
+		}
+		if !result.Valid {
 			return result
 		}
 	}
@@ -178,6 +202,32 @@ func validateUniqueMessageId(ctx context.Context, messageID string, sortedContex
 		}
 	}
 	return contextValidationResult{Valid: true, ForwardRequest: true}
+}
+
+// isCareRelay reports whether an incoming request may be care relaying a payload the mock
+// sent it. With use_care on, the mock's issue goes to CARE_URL and is recorded in this
+// transaction on the way out; care then delivers the same payload (same message_id) back
+// into the workbench, and it can land on that same transaction.
+func (cv *Validator) isCareRelay(action string, useCare bool) bool {
+	return useCare && cv.moduleType == apiservice.Receiver && careEndpoints[action]
+}
+
+// validateCareRelayMessageId allows messageID to appear once already, on an entry of the
+// same action: the mock's own outbound copy that care relayed back. Any other prior use
+// (a second relay, or the id on another action) is still a duplicate.
+func validateCareRelayMessageId(ctx context.Context, messageID string, action string, sortedContexts []cache.ApiData) contextValidationResult {
+	var matches []cache.ApiData
+	for _, c := range sortedContexts {
+		if c.MessageId == messageID {
+			matches = append(matches, c)
+		}
+	}
+	if len(matches) == 0 || (len(matches) == 1 && matches[0].Action == action) {
+		return contextValidationResult{Valid: true, ForwardRequest: true}
+	}
+	msg := fmt.Sprintf("Duplicate message_id found in the transaction history, %s", messageID)
+	log.Warnf(ctx, "%s", msg)
+	return contextValidationResult{Valid: false, Error: msg, ForwardRequest: false}
 }
 
 func (cv *Validator) validateSyncPath(ctx context.Context, payload apiservice.PayloadEnvelope, transactionData *cache.TransactionCache) contextValidationResult {

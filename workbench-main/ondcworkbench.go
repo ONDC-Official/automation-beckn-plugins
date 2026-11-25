@@ -74,7 +74,7 @@ func New(ctx context.Context, cache definition.Cache, config *Config) (definitio
 	}
 	rcv := receiver.NewWorkbenchRequestReceiver(*txnCache,*subscriberCache,*sessionCache)
 
-	contextValidator := contextvalidatotors.NewContextValidator(txnCache,transactionProperties)
+	contextValidator := contextvalidatotors.NewContextValidator(txnCache,transactionProperties,apiservice.ModuleType(config.ModuleType))
 
 	return &ondcWorkbench{
 		Config:    config,
