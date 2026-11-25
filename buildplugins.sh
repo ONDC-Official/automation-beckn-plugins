@@ -13,6 +13,11 @@ set -euo pipefail
 #   ./buildplugins.sh                          # Uses ./plugins
 #   ./buildplugins.sh /custom/path/plugins     # Uses /custom/path/plugins
 #   ./buildplugins.sh build-output/plugins     # Uses build-output/plugins
+#   PWB_PROFILE=fd ./buildplugins.sh           # Also builds the FD-only plugins
+#
+# Environment:
+#   PWB_PROFILE - Optional. "fd" also builds the FD (ONDC:FIS14:FD) plugins fdgate.so and
+#                 fdtransport.so. Unset (Beckn images) builds exactly the Beckn set.
 #
 # Outputs:
 #   <PLUGINS_DIR>/ondcValidator.so
@@ -59,5 +64,11 @@ build_plugin "signer" "signer" "./cmd"
 build_plugin "encryptionmiddleware" "encryption-middleware" "./cmd"
 build_plugin "outgoingencryptionmiddleware" "outgoing-encryption-middleware" "./cmd"
 build_plugin "callbackredirect" "workbench-callback-redirect" "./cmd"
+
+# FD-only plugins, compiled into FD images only.
+if [[ "${PWB_PROFILE:-}" == "fd" ]]; then
+    build_plugin "fdgate" "fd-gate" "./cmd"
+    build_plugin "fdtransport" "fd-transport" "./cmd"
+fi
 
 echo "✅ Done! Plugins are in: $PLUGINS_DIR"
