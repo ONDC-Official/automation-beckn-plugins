@@ -3,6 +3,7 @@ package receiver
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"time"
 
@@ -42,6 +43,11 @@ func (r *WorkbenchRequestReceiver) ReceiveFromNP(ctx context.Context, requestDat
 	subscriberData, _ := r.subscriberCache.LoadSubscriberThatExists(
 		ctx, requestData.SubscriberURL,
 	)
+	// tryFulfillExpectation drops expired expectations, so keep the originals for the NACK message.
+	var expectations []cache.Expectation
+	if subscriberData != nil {
+		expectations = append(expectations, subscriberData.ActiveSessions...)
+	}
 	if subscriberData != nil {
 		err := r.tryFulfillExpectation(ctx, subscriberData, requestData)
 		if( err != nil ){
@@ -62,8 +68,54 @@ func (r *WorkbenchRequestReceiver) ReceiveFromNP(ctx context.Context, requestDat
 		return nil
 	}
 	return payloadutils.NewPreconditionFailedHTTPError(
-		fmt.Sprintf("No active expectation found for transaction ID: %s and Subscriber URL: %s for as a %s", requestData.TransactionID, requestData.SubscriberURL,requestData.RequestOwner),
-	) 
+		noExpectationMessage(requestData, subscriberData != nil, expectations, time.Now()),
+	)
+}
+
+// noExpectationMessage explains a request that starts a transaction nobody is waiting for.
+// New users hit this when they send their first request before starting a flow on the
+// workbench, so say what to do, and why this particular request didn't match.
+//
+// The subscriber entry is only written once a flow is started, so a missing entry can mean
+// either that no session exists for this subscriber URL or that one does but no flow has
+// been started on it yet. The message names both, with what to do for each.
+func noExpectationMessage(requestData *apiservice.WorkbenchRequestData, hasSubscriber bool, expectations []cache.Expectation, now time.Time) string {
+	action := requestData.BodyEnvelope.Context.Action
+	role := "BAP (buyer app)"
+	if requestData.RequestOwner == apiservice.SellerNP {
+		role = "BPP (seller app)"
+	}
+	msg := fmt.Sprintf("No active expectation found for transaction ID: %s and Subscriber URL: %s as a %s.",
+		requestData.TransactionID, requestData.SubscriberURL, requestData.RequestOwner)
+	startFlow := fmt.Sprintf("start a flow from your session on the workbench, then send %s within 5 minutes.", action)
+
+	if !hasSubscriber {
+		return msg + fmt.Sprintf(" No flow has been started on the workbench for this subscriber URL. Either:"+
+			" (1) you haven't created a session yet: create a session on the workbench with this subscriber URL as a %s,"+
+			" start a flow there, then send %s within 5 minutes; or"+
+			" (2) you created a session but haven't started a flow: %s", role, action, startFlow)
+	}
+
+	waitingFor := []string{}
+	expired := false
+	for _, expectation := range expectations {
+		expireAt, err := time.Parse(time.RFC3339, expectation.ExpireAt)
+		if err == nil && now.After(expireAt) {
+			expired = true
+			continue
+		}
+		waitingFor = append(waitingFor, expectation.ExpectedAction)
+	}
+	switch {
+	case len(waitingFor) > 0:
+		return msg + fmt.Sprintf(" Your session is waiting for %s, not %s. Send %s, or %s",
+			strings.Join(waitingFor, ", "), action, strings.Join(waitingFor, " or "), startFlow)
+	case expired:
+		return msg + " The flow you started expired before this request arrived. To try again, " + startFlow
+	default:
+		return msg + fmt.Sprintf(" No flow is waiting for a request on this subscriber URL. To start a transaction, %s"+
+			" If your session has expired, create a new one with this subscriber URL as a %s.", startFlow, role)
+	}
 }
 
 func (r *WorkbenchRequestReceiver) ReceiveFromMock(ctx context.Context, requestData *apiservice.WorkbenchRequestData) error {
